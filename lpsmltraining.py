@@ -4,7 +4,7 @@ from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 from lpsmltest import computemetrics
 
-df = pd.read_excel("C:/Users/LuccaMarinaro/Downloads/newtarifa.xlsx",engine="openpyxl")
+df = pd.read_excel("newtarifa.xlsx",engine="openpyxl")
 
 df = df.apply(pd.to_numeric)
 

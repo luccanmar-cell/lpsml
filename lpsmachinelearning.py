@@ -1,6 +1,6 @@
 import pandas as pd
 
-df = pd.read_excel("C:/Users/LuccaMarinaro/Downloads/tarifa.xlsx",engine="openpyxl")
+df = pd.read_excel("tarifa.xlsx",engine="openpyxl")
 
 print(df.head())
 
@@ -18,4 +18,4 @@ df.fillna(0, inplace=True)
 
 print(df.isnull().sum())
 
-df.to_excel("C:/Users/LuccaMarinaro/Downloads/newtarifa.xlsx", index=False)
+df.to_excel("newtarifa.xlsx", index=False)
