@@ -8,7 +8,7 @@ df = pd.read_excel("newtarifa.xlsx",engine="openpyxl")
 
 df = df.apply(pd.to_numeric)
 
-X = df.drop(columns=["Prima"])
+X = df.drop(columns=["PrimaCasco", "PrimaRC", "PrimaClausulaAjuste", "PrimaAccesorio", "Prima"])
 Y = df["Prima"]
 
 X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2)
