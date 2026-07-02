@@ -3,7 +3,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
 
-df = pd.read_excel("C:/Users/LuccaMarinaro/Downloads/tarifa.xlsx",engine="openpyxl")
+df = pd.read_excel("C:/Users/LuccaMarinaro/Downloads/newtarifa.xlsx",engine="openpyxl")
 
 df = df.apply(pd.to_numeric)
 
@@ -18,5 +18,3 @@ X_test = scaler.transform(X_test)
 
 model = RandomForestRegressor()
 model.fit(X_train, Y_train)
-
-print("Accuracy: ", model.score(X_test, Y_test))
