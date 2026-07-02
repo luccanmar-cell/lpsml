@@ -2,6 +2,7 @@ import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestRegressor
 from sklearn.preprocessing import StandardScaler
+from lpsmltest import computemetrics
 
 df = pd.read_excel("C:/Users/LuccaMarinaro/Downloads/newtarifa.xlsx",engine="openpyxl")
 
@@ -18,3 +19,4 @@ X_test = scaler.transform(X_test)
 
 model = RandomForestRegressor()
 model.fit(X_train, Y_train)
+computemetrics(model, X_test, Y_test)
