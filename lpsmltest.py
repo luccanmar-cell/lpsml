@@ -34,7 +34,7 @@ def computemetrics(model, X_test, Y_test):
     avg = np.mean(y_true)
     y_true_norm = y_true / avg
     y_pred_norm = y_pred / avg
-    plt.scatter(y_true_norm, y_pred_norm, color='blue', alpha=0.7, label='Predictions')
+    plt.scatter(y_true_norm, y_pred_norm, color='blue', alpha=0.7, label='Prediccion')
     plt.plot([y_true_norm.min(), y_true_norm.max()], [y_true_norm.min(), y_true_norm.max()], 'r--', label='Perfect Fit')
     plt.xlabel('Valores Actual / Promedio de y_true')
     plt.ylabel('Valores Previstos / Promedio de y_true')
@@ -43,10 +43,10 @@ def computemetrics(model, X_test, Y_test):
     plt.savefig("MAE.png")
 
     plt.figure(2, figsize=(10, 5))
-    plt.hist(np.abs(y_true - y_pred), bins=30, color="steelblue",edgecolor="black")
+    plt.hist(np.abs(y_true - y_pred), bins=30, color="steelblue", edgecolor="black")
     plt.axvline(x=0, color="red", linestyle="--", label="Prediccion Perfecta")
     plt.title("Frecuencia de Error vs Magnitud de Error")
     plt.xlabel("Magnitud")
     plt.ylabel("Frecuencia")
     plt.legend()
-    plt.savefig("Hist.png")
+    plt.savefig("Hist_error.png")
