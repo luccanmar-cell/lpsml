@@ -32,10 +32,12 @@ def computemetrics(model, X_test, Y_test):
 
     plt.figure(1, figsize=(6, 6))
     avg = np.mean(y_true)
-    plt.scatter(y_true/avg, y_pred/avg, color='blue', alpha=0.7, label='Predictions')
-    plt.plot([y_true.min(), y_true.max()], [y_true.min(), y_true.max()], 'r--', label='Perfect Fit')
-    plt.xlabel('Valores Actual')
-    plt.ylabel('Valores Previstos')
+    y_true_norm = y_true / avg
+    y_pred_norm = y_pred / avg
+    plt.scatter(y_true_norm, y_pred_norm, color='blue', alpha=0.7, label='Predictions')
+    plt.plot([y_true_norm.min(), y_true_norm.max()], [y_true_norm.min(), y_true_norm.max()], 'r--', label='Perfect Fit')
+    plt.xlabel('Valores Actual / Promedio de y_true')
+    plt.ylabel('Valores Previstos / Promedio de y_true')
     plt.title(f'Actual vs Previsto (MAE: {mae:.2f})')
     plt.legend()
     plt.savefig("MAE.png")
