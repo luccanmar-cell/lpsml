@@ -38,7 +38,7 @@ def computemetrics(model, X_test, Y_test):
     plt.plot([y_true_norm.min(), y_true_norm.max()], [y_true_norm.min(), y_true_norm.max()], 'r--', label='Perfect Fit')
     plt.xlabel('Valores Actual / Promedio de y_true')
     plt.ylabel('Valores Previstos / Promedio de y_true')
-    plt.title(f'Actual vs Previsto (MAE: {mae:.2f})')
+    plt.title(f'Actual vs Previsto (MAE: {mae:.2f}, MAPE: {mape_percentage:.2f}%)')
     plt.legend()
     plt.savefig("MAE.png")
 
