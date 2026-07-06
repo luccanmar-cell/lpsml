@@ -7,10 +7,13 @@ from sklearn.metrics import mean_absolute_percentage_error
 def computemetrics(model, X_test, Y_test):
     real_values = Y_test
     print("Accuracy: ", model.score(X_test, Y_test))
+    df = pd.read_excel("newtarifa.xlsx",engine="openpyxl")
 
     y_true = np.array(real_values)
     pred_values = model.predict(X_test)
     y_pred = np.array(pred_values)
+    df["Prima Previsto"]= y_pred
+    df["Diferencia"]= abs(y_true - y_pred)
 
     mae = mean_absolute_error(y_true, y_pred)
     print(f"Mean Absolute Error: {mae}")
@@ -50,3 +53,4 @@ def computemetrics(model, X_test, Y_test):
     plt.ylabel("Frecuencia")
     plt.legend()
     plt.savefig("Hist_error.png")
+    df.to_excel("newtarifa.xlsx", index=False)

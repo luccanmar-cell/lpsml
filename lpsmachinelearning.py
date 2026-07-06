@@ -7,7 +7,7 @@ print(df.head())
 print(df.isnull().sum())
 
 split_df = df["Accesorios"].str.split(",", expand = True)
-split_df.columns = [f"Value{i+1}" for i in range(split_df.shape[1])]
+split_df.columns = [f"Accesorio {i+1}" for i in range(split_df.shape[1])]
 split_df = split_df.apply(pd.to_numeric, errors = "coerce").fillna(0)
 df = pd.concat([df.drop(columns=["Accesorios"]), split_df], axis = 1)
 print(df)
