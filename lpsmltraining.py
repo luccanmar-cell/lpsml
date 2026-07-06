@@ -19,4 +19,4 @@ X_test = scaler.transform(X_test)
 
 model = RandomForestRegressor()
 model.fit(X_train, Y_train)
-computemetrics(model, X_test, Y_test)
+computemetrics(model, X_test, Y_test, X_train)

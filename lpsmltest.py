@@ -4,23 +4,40 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import mean_absolute_error
 from sklearn.metrics import mean_absolute_percentage_error
 
-def computemetrics(model, X_test, Y_test):
+def computemetrics(model, X_test, Y_test, X_train):
     real_values = Y_test
     print("Accuracy: ", model.score(X_test, Y_test))
-    df = pd.read_excel("newtarifa.xlsx",engine="openpyxl")
-
+    
+    # Read the full original dataset
+    df = pd.read_excel("newtarifa.xlsx", engine="openpyxl")
+    
     y_true = np.array(real_values)
     pred_values = model.predict(X_test)
     y_pred = np.array(pred_values)
-    df["Prima Previsto"]= y_pred
-    df["Diferencia"]= abs(y_true - y_pred)
+    
+    # Calculate percentage error
+    percentage_error = ((y_true - y_pred) / y_true) * 100
+    
+    # Initialize new columns with NaN for training rows (signifies not predicted)
+    df["Prima Previsto"] = np.nan
+    df["Porcentaje Error"] = np.nan
+    
+    # Get the indices of test samples (Y_test has the original indices)
+    test_indices = Y_test.index.tolist()
+    
+    # Fill in predictions and errors only for test rows
+    for idx, pred, error in zip(test_indices, pred_values, percentage_error):
+        df.loc[idx, "Prima Previsto"] = float(pred)
+        df.loc[idx, "Porcentaje Error"] = float(error)
 
     mae = mean_absolute_error(y_true, y_pred)
     print(f"Mean Absolute Error: {mae}")
 
+    # Create analysis dataframe for visualizations
     analysis_df = pd.DataFrame({
         'Real': y_true,
         'Previsto': y_pred,
+        'Porcentaje Error': percentage_error,
         'Error_Absoluto': np.abs(y_true - y_pred),
         'Residual': y_true - y_pred
     })
@@ -53,4 +70,6 @@ def computemetrics(model, X_test, Y_test):
     plt.ylabel("Frecuencia")
     plt.legend()
     plt.savefig("Hist_error.png")
+    
+    # Save full dataframe with predictions and errors to Excel
     df.to_excel("newtarifa.xlsx", index=False)
