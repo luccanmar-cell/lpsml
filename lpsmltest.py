@@ -71,5 +71,20 @@ def computemetrics(model, X_test, Y_test, X_train):
     plt.legend()
     plt.savefig("Hist_error.png")
     
+    # Create a zoomed histogram focusing on the high-density range
+    errors = np.abs(y_true - y_pred)
+    # Find the range containing 90% of errors (focusing on the dense region)
+    percentile_90 = np.percentile(errors, 90)
+    zoomed_errors = errors[errors <= percentile_90]
+    
+    plt.figure(3, figsize=(10, 5))
+    plt.hist(zoomed_errors, bins=50, color="coral", edgecolor="black")
+    plt.axvline(x=0, color="red", linestyle="--", label="Prediccion Perfecta")
+    plt.title(f"Frecuencia de Error (90% densidad) - Rango: 0 a {percentile_90:.2f}")
+    plt.xlabel("Magnitud de Error")
+    plt.ylabel("Frecuencia")
+    plt.legend()
+    plt.savefig("Hist_error_zoomed.png")
+    
     # Save full dataframe with predictions and errors to Excel
     df.to_excel("newtarifa.xlsx", index=False)
