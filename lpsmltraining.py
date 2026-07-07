@@ -25,14 +25,14 @@ parameter_grid = [
     {"n_estimators": 200, "max_depth": 10},
 ]
 
-for params in parameter_grid:
+for paramets in parameter_grid:
     pipeline = make_pipeline(
         StandardScaler(),
         RandomForestRegressor(
             random_state=42,
             n_jobs=-1,
-            n_estimators=params["n_estimators"],
-            max_depth=params["max_depth"],
+            n_estimators=paramets["n_estimators"],
+            max_depth=paramets["max_depth"],
         ),
     )
 
@@ -47,7 +47,7 @@ for params in parameter_grid:
 
     mean_mae = -scores.mean()
     print(
-        f"n_estimators={params['n_estimators']}, max_depth={params['max_depth']} -> "
+        f"n_estimators={paramets['n_estimators']}, max_depth={paramets['max_depth']} -> "
         f"CV MAE: {mean_mae:.4f}"
     )
 
