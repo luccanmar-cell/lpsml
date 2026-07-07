@@ -4,28 +4,30 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import mean_absolute_error
 from sklearn.metrics import mean_absolute_percentage_error
 
+
 def computemetrics(model, X_test, Y_test, X_train):
     real_values = Y_test
     print("Accuracy: ", model.score(X_test, Y_test))
     
-    # Read the full original dataset
     df = pd.read_excel("newtarifa.xlsx", engine="openpyxl")
     
-    y_true = np.array(real_values)
+    y_true = np.asarray(real_values, dtype=float)
     pred_values = model.predict(X_test)
-    y_pred = np.array(pred_values)
+    y_pred = np.asarray(pred_values, dtype=float)
     
-    # Calculate percentage error
-    percentage_error = ((y_true - y_pred) / y_true) * 100
+    with np.errstate(divide="ignore", invalid="ignore"):
+        percentage_error = np.divide(
+            y_true - y_pred,
+            y_true,
+            out=np.full(y_true.shape, np.nan, dtype=float),
+            where=np.abs(y_true) > 0,
+        ) * 100
     
-    # Initialize new columns with NaN for training rows (signifies not predicted)
     df["Prima Previsto"] = np.nan
     df["Porcentaje Error"] = np.nan
     
-    # Get the indices of test samples (Y_test has the original indices)
     test_indices = Y_test.index.tolist()
     
-    # Fill in predictions and errors only for test rows
     for idx, pred, error in zip(test_indices, pred_values, percentage_error):
         df.loc[idx, "Prima Previsto"] = float(pred)
         df.loc[idx, "Porcentaje Error"] = float(error)
@@ -33,7 +35,6 @@ def computemetrics(model, X_test, Y_test, X_train):
     mae = mean_absolute_error(y_true, y_pred)
     print(f"Mean Absolute Error: {mae}")
 
-    # Create analysis dataframe for visualizations
     analysis_df = pd.DataFrame({
         'Real': y_true,
         'Previsto': y_pred,
@@ -71,9 +72,7 @@ def computemetrics(model, X_test, Y_test, X_train):
     plt.legend()
     plt.savefig("Hist_error.png")
     
-    # Create a zoomed histogram focusing on the high-density range
     errors = np.abs(y_true - y_pred)
-    # Find the range containing 90% of errors (focusing on the dense region)
     percentile_90 = np.percentile(errors, 90)
     zoomed_errors = errors[errors <= percentile_90]
     
@@ -86,5 +85,4 @@ def computemetrics(model, X_test, Y_test, X_train):
     plt.legend()
     plt.savefig("Hist_error_zoomed.png")
     
-    # Save full dataframe with predictions and errors to Excel
     df.to_excel("newtarifa.xlsx", index=False)
