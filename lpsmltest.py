@@ -4,12 +4,17 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import mean_absolute_error
 from sklearn.metrics import mean_absolute_percentage_error
 
+DATASET_PATH = "tarifa.parquet"
+METRICS_OUTPUT_PATH = "tarifa_metrics.parquet"
+TARGET_COLUMN = "Prima"
+
 
 def computemetrics(model, X_test, Y_test, X_train):
     real_values = Y_test
     print("Accuracy: ", model.score(X_test, Y_test))
     
-    df = pd.read_excel("newtarifa.xlsx", engine="openpyxl")
+    df = pd.read_parquet(DATASET_PATH)
+    df = df.apply(pd.to_numeric)
     
     y_true = np.asarray(real_values, dtype=float)
     pred_values = model.predict(X_test)
@@ -85,4 +90,4 @@ def computemetrics(model, X_test, Y_test, X_train):
     plt.legend()
     plt.savefig("Hist_error_zoomed.png")
     
-    df.to_excel("newtarifa.xlsx", index=False)
+    df.to_parquet(METRICS_OUTPUT_PATH, index=False)

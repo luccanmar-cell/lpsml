@@ -5,12 +5,14 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from lpsmltest import computemetrics
 
+DATASET_PATH = "tarifa.parquet"
+TARGET_COLUMN = "Prima"
 
-df = pd.read_excel("newtarifa.xlsx", engine="openpyxl")
+df = pd.read_parquet(DATASET_PATH)
 df = df.apply(pd.to_numeric)
 
-X = df.drop(columns=["PrimaCasco", "PrimaRC", "PrimaClausulaAjuste", "PrimaAccesorio", "Prima"])
-Y = df["Prima"]
+X = df.drop(columns=[TARGET_COLUMN])
+Y = df[TARGET_COLUMN]
 
 cv = KFold(n_splits=5, shuffle=True, random_state=42)
 
