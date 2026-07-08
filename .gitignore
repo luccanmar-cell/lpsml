@@ -1,0 +1,11 @@
+# Raw Excel workbooks should stay out of version control.
+*.xlsx
+*.xslx
+*.xls
+*.xlsm
+*.xlsb
+~$*.xls*
+
+# Python cache files.
+__pycache__/
+*.py[cod]
