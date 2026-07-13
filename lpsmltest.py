@@ -4,8 +4,8 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import mean_absolute_error
 from sklearn.metrics import mean_absolute_percentage_error
 
-DATASET_PATH = "tarifa.parquet"
-METRICS_OUTPUT_PATH = "tarifa_metrics.parquet"
+DATASET_PATH = "tarifacompleto.parquet"
+METRICS_OUTPUT_PATH = "tarifacompleto_metrics.parquet"
 TARGET_COLUMN = "Prima"
 
 
@@ -14,7 +14,16 @@ def computemetrics(model, X_test, Y_test, X_train):
     print("Accuracy: ", model.score(X_test, Y_test))
     
     df = pd.read_parquet(DATASET_PATH)
-    df = df.apply(pd.to_numeric)
+    if "NroPoliza" in df.columns:
+        df["NroPoliza"] = df["NroPoliza"].astype(str)
+    df = df.copy()
+    for column in df.columns:
+        if column == "NroPoliza":
+            continue
+        if not pd.api.types.is_numeric_dtype(df[column]):
+            converted = pd.to_numeric(df[column], errors="coerce")
+            if converted.notna().sum() == df[column].notna().sum():
+                df[column] = converted
     
     y_true = np.asarray(real_values, dtype=float)
     pred_values = model.predict(X_test)
@@ -36,6 +45,10 @@ def computemetrics(model, X_test, Y_test, X_train):
     for idx, pred, error in zip(test_indices, pred_values, percentage_error):
         df.loc[idx, "Prima Previsto"] = float(pred)
         df.loc[idx, "Porcentaje Error"] = float(error)
+
+    if "NroPoliza" in df.columns:
+        columns = ["NroPoliza"] + [col for col in df.columns if col != "NroPoliza"]
+        df = df[columns]
 
     mae = mean_absolute_error(y_true, y_pred)
     print(f"Mean Absolute Error: {mae}")

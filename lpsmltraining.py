@@ -5,13 +5,13 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 from lpsmltest import computemetrics
 
-DATASET_PATH = "tarifa.parquet"
+DATASET_PATH = "tarifacompleto.parquet"
 TARGET_COLUMN = "Prima"
 
 df = pd.read_parquet(DATASET_PATH)
-df = df.apply(pd.to_numeric)
+df = df.apply(pd.to_numeric, errors="coerce")
 
-X = df.drop(columns=[TARGET_COLUMN])
+X = df.drop(columns=[TARGET_COLUMN, "NroPoliza"], errors="ignore")
 Y = df[TARGET_COLUMN]
 
 cv = KFold(n_splits=5, shuffle=True, random_state=42)

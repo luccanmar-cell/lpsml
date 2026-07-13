@@ -148,13 +148,16 @@ def build_model_dataset(
     extra_drop_columns = list(drop_columns or [])
     columns_to_drop = [
         column
-        for column in dict.fromkeys([*leakage_columns, *extra_drop_columns])
+        for column in dict.fromkeys([
+            *leakage_columns,
+            *extra_drop_columns,
+        ])
         if column in raw_df.columns and column != target
     ]
 
     df = raw_df.drop(columns=columns_to_drop).dropna(subset=[target]).copy()
     df = one_hot_encode_accessories(df, accessories_column=accessories_column)
-    df = convert_numeric_like_columns(df, exclude_columns=[target])
+    df = convert_numeric_like_columns(df, exclude_columns=[target, "Pol6TTaCod"])
     df = ordinal_encode_categoricals(df, exclude_columns=[target])
     df = fill_missing_feature_values(df, target_column=target)
     df = df[[column for column in df.columns if column != target] + [target]]

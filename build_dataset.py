@@ -15,7 +15,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Build a numeric parquet dataset from the raw LPS Excel tariff file."
     )
-    parser.add_argument("filename", help="Path to the raw Excel file, such as tarifa.xlsx.")
+    parser.add_argument(
+        "filename",
+        nargs="?",
+        default="tarifacompleto.xlsx",
+        help="Path to the raw Excel file. Defaults to tarifacompleto.xlsx.",
+    )
     parser.add_argument(
         "-o",
         "--output",
@@ -55,6 +60,8 @@ def main() -> None:
         drop_columns=args.drop_column,
         accessories_column=args.accessories_column,
     )
+    if "NroPoliza" in raw_df.columns and "NroPoliza" not in dataset.columns:
+        dataset["NroPoliza"] = raw_df["NroPoliza"].astype(str).values
     saved_path = save_dataset_as_parquet(dataset, output_path)
 
     print(f"Saved dataset: {saved_path}")
