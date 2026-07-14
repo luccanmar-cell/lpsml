@@ -48,22 +48,17 @@ def default_output_path(input_path: Path) -> Path:
     return input_path.with_suffix(".parquet")
 
 
-def build_dataset_file(
-    input_path: str | Path,
-    output_path: str | Path | None = None,
-    target_column: str | None = None,
-    drop_columns: list[str] | None = None,
-    accessories_column: str = DEFAULT_ACCESSORIES_COLUMN,
-) -> tuple[Path, dict[str, object]]:
-    input_path = Path(input_path)
-    output_path = Path(output_path) if output_path else default_output_path(input_path)
+def main() -> None:
+    args = parse_args()
+    input_path = Path(args.filename)
+    output_path = Path(args.output) if args.output else default_output_path(input_path)
 
     raw_df = load_excel_dataset(input_path)
     dataset, metadata = build_model_dataset(
         raw_df,
-        target_column=target_column,
-        drop_columns=drop_columns or [],
-        accessories_column=accessories_column,
+        target_column=args.target,
+        drop_columns=args.drop_column,
+        accessories_column=args.accessories_column,
     )
     if "NroPoliza" in raw_df.columns and "NroPoliza" not in dataset.columns:
         dataset["NroPoliza"] = raw_df["NroPoliza"].astype(str).values
@@ -75,19 +70,6 @@ def build_dataset_file(
     print(f"Dropped leakage columns: {metadata['dropped_columns']}")
     print("\nDataset preview:")
     print(dataset.head())
-
-    return saved_path, metadata
-
-
-def main() -> None:
-    args = parse_args()
-    build_dataset_file(
-        input_path=args.filename,
-        output_path=args.output,
-        target_column=args.target,
-        drop_columns=args.drop_column,
-        accessories_column=args.accessories_column,
-    )
 
 
 if __name__ == "__main__":
