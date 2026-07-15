@@ -3,10 +3,46 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Iterable
 
+import numpy as np
 import pandas as pd
 
 
 DEFAULT_ACCESSORIES_COLUMN = "Accesorios"
+COBERTURA_LABELS = {
+    1: "A",
+    2: "A2",
+    3: "B1",
+    4: "B",
+    5: "B2",
+    6: "XB",
+    7: "C1",
+    8: "C4",
+    9: "C1+",
+    10: "C",
+    11: "C2",
+    12: "C3",
+    13: "D2C",
+    14: "D2H",
+    15: "D6%",
+    16: "D5%",
+    17: "D4%",
+    18: "D3%",
+    19: "D5",
+    20: "D6",
+    21: "D2%",
+    22: "D1%",
+    23: "D54",
+    24: "D32",
+    25: "D2I",
+    26: "D36",
+    27: "D2",
+    28: "D3I",
+    29: "D3",
+    30: "D4I",
+    31: "D4",
+    32: "D",
+    33: "D1",
+}
 
 
 def load_excel_dataset(filename: str | Path) -> pd.DataFrame:
@@ -30,12 +66,15 @@ def infer_target_column(columns: Iterable[str], requested_target: str | None = N
     return prima_columns[-1]
 
 
-def default_leakage_columns(columns: Iterable[str], target_column: str) -> list[str]:
-    """Drop intermediate Prima columns while keeping the final Prima target."""
+def infer_component_target_columns(
+    columns: Iterable[str],
+    total_target_column: str,
+) -> list[str]:
+    """Return the intermediate Prima columns whose sum should produce the total."""
     return [
         column
         for column in columns
-        if column != target_column and column.lower().startswith("prima")
+        if column != total_target_column and column.lower().startswith("prima")
     ]
 
 
@@ -57,6 +96,20 @@ def split_accessory_codes(value: object) -> list[str]:
         tokens.append(token)
 
     return tokens
+
+
+def cobertura_label(value: object) -> str:
+    """Translate the numeric Cobertura category into its original policy code."""
+    if pd.isna(value):
+        return "Missing"
+
+    numeric_value = pd.to_numeric(value, errors="coerce")
+    if pd.notna(numeric_value) and float(numeric_value).is_integer():
+        category_number = int(numeric_value)
+        if category_number in COBERTURA_LABELS:
+            return COBERTURA_LABELS[category_number]
+
+    return str(value)
 
 
 def one_hot_encode_accessories(
@@ -128,10 +181,14 @@ def ordinal_encode_categoricals(df: pd.DataFrame, exclude_columns: Iterable[str]
     return encoded
 
 
-def fill_missing_feature_values(df: pd.DataFrame, target_column: str) -> pd.DataFrame:
-    """Fill feature nulls with 0 while keeping target values as-is."""
+def fill_missing_feature_values(
+    df: pd.DataFrame,
+    target_columns: Iterable[str],
+) -> pd.DataFrame:
+    """Fill feature nulls with 0 while keeping all target values as-is."""
     filled = df.copy()
-    feature_columns = [column for column in filled.columns if column != target_column]
+    target_set = set(target_columns)
+    feature_columns = [column for column in filled.columns if column not in target_set]
     filled[feature_columns] = filled[feature_columns].fillna(0)
     return filled
 
@@ -142,33 +199,128 @@ def build_model_dataset(
     drop_columns: Iterable[str] | None = None,
     accessories_column: str = DEFAULT_ACCESSORIES_COLUMN,
 ) -> tuple[pd.DataFrame, dict[str, object]]:
-    """Create a numeric dataset ready for model training."""
-    target = infer_target_column(raw_df.columns, target_column)
-    leakage_columns = default_leakage_columns(raw_df.columns, target)
+    """Create a numeric dataset with component and total Prima targets retained."""
+    total_target = infer_target_column(raw_df.columns, target_column)
+    component_targets = infer_component_target_columns(raw_df.columns, total_target)
+    target_columns = [*component_targets, total_target]
     extra_drop_columns = list(drop_columns or [])
     columns_to_drop = [
         column
-        for column in dict.fromkeys([
-            *leakage_columns,
-            *extra_drop_columns,
-        ])
-        if column in raw_df.columns and column != target
+        for column in dict.fromkeys(extra_drop_columns)
+        if column in raw_df.columns and column not in target_columns
     ]
 
-    df = raw_df.drop(columns=columns_to_drop).dropna(subset=[target]).copy()
+    df = raw_df.drop(columns=columns_to_drop).dropna(subset=target_columns).copy()
     df = one_hot_encode_accessories(df, accessories_column=accessories_column)
-    df = convert_numeric_like_columns(df, exclude_columns=[target, "Pol6TTaCod"])
-    df = ordinal_encode_categoricals(df, exclude_columns=[target])
-    df = fill_missing_feature_values(df, target_column=target)
-    df = df[[column for column in df.columns if column != target] + [target]]
+    reporting_columns: list[str] = []
+    if "Cobertura" in df.columns:
+        df["CoberturaLabel"] = df["Cobertura"].map(cobertura_label).astype("string")
+        reporting_columns.append("CoberturaLabel")
+
+    if "Pol6TTaCod" in df.columns:
+        original_values = df["Pol6TTaCod"].astype("string").fillna("Missing")
+        categories = sorted(original_values.unique())
+        df["Pol6TTaCodEncoded"] = pd.Categorical(
+            original_values,
+            categories=categories,
+        ).codes
+        df["Pol6TTaCod"] = original_values
+        reporting_columns.append("Pol6TTaCod")
+
+    df = convert_numeric_like_columns(
+        df,
+        exclude_columns=[*target_columns, *reporting_columns, "Pol6TTaCod"],
+    )
+    df = ordinal_encode_categoricals(
+        df,
+        exclude_columns=[*target_columns, *reporting_columns],
+    )
+    df = fill_missing_feature_values(df, target_columns=target_columns)
+    feature_columns = [column for column in df.columns if column not in target_columns]
+    df = df[[*feature_columns, *target_columns]]
 
     metadata = {
-        "target_column": target,
+        "target_column": total_target,
+        "component_target_columns": component_targets,
+        "target_columns": target_columns,
+        "reporting_columns": reporting_columns,
         "dropped_columns": columns_to_drop,
         "row_count": len(df),
         "column_count": len(df.columns),
     }
     return df, metadata
+
+
+def split_prima_sum_consistency(
+    df: pd.DataFrame,
+    component_target_columns: Iterable[str],
+    total_target_column: str,
+    tolerance: float = 0.02,
+    min_pol6tta_count: int = 50,
+    min_cobertura_count: int = 50,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Separate rows that satisfy target, coverage, and category-frequency checks."""
+    if min_pol6tta_count < 1:
+        raise ValueError("min_pol6tta_count must be at least 1.")
+    if min_cobertura_count < 1:
+        raise ValueError("min_cobertura_count must be at least 1.")
+
+    component_columns = list(component_target_columns)
+    difference = df[total_target_column] - df[component_columns].sum(axis=1)
+    sum_consistent = np.abs(difference.to_numpy(dtype=float)) <= tolerance + 1e-9
+    if "CoberturaLabel" in df.columns:
+        cobertura_present = df["CoberturaLabel"].ne("Missing").to_numpy()
+    else:
+        cobertura_present = df["Cobertura"].notna().to_numpy()
+
+    pol6tta_counts = df["Pol6TTaCod"].value_counts(dropna=False)
+    row_pol6tta_counts = df["Pol6TTaCod"].map(pol6tta_counts).to_numpy(dtype=int)
+    pol6tta_sufficient = row_pol6tta_counts >= min_pol6tta_count
+    cobertura_counts = df["CoberturaLabel"].value_counts(dropna=False)
+    row_cobertura_counts = df["CoberturaLabel"].map(cobertura_counts).to_numpy(dtype=int)
+    cobertura_sufficient = row_cobertura_counts >= min_cobertura_count
+    clean_mask = (
+        sum_consistent
+        & cobertura_present
+        & cobertura_sufficient
+        & pol6tta_sufficient
+    )
+
+    clean_df = df.loc[clean_mask].copy()
+    doubtful_df = df.loc[~clean_mask].copy()
+    doubtful_df["PrimaSumDifference"] = difference.loc[~clean_mask]
+    doubtful_df["Pol6TTaCodCount"] = row_pol6tta_counts[~clean_mask]
+    doubtful_df["CoberturaCount"] = row_cobertura_counts[~clean_mask]
+    doubtful_df["DoubtfulReason"] = [
+        "; ".join(
+            reason
+            for condition, reason in [
+                (not sum_is_consistent, "Prima component sum mismatch"),
+                (not has_cobertura, "Missing Cobertura"),
+                (
+                    has_cobertura and not has_sufficient_cobertura,
+                    f"Rare Cobertura (<{min_cobertura_count} rows)",
+                ),
+                (
+                    not has_sufficient_pol6tta,
+                    f"Rare Pol6TTaCod (<{min_pol6tta_count} rows)",
+                ),
+            ]
+            if condition
+        )
+        for (
+            sum_is_consistent,
+            has_cobertura,
+            has_sufficient_cobertura,
+            has_sufficient_pol6tta,
+        ) in zip(
+            sum_consistent[~clean_mask],
+            cobertura_present[~clean_mask],
+            cobertura_sufficient[~clean_mask],
+            pol6tta_sufficient[~clean_mask],
+        )
+    ]
+    return clean_df, doubtful_df
 
 
 def save_dataset_as_parquet(df: pd.DataFrame, output_path: str | Path) -> Path:
