@@ -1,8 +1,7 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from sklearn.metrics import mean_absolute_error
-from sklearn.metrics import mean_absolute_percentage_error
+from sklearn.metrics import mean_absolute_error, mean_absolute_percentage_error
 
 DATASET_PATH = "tarifacompleto.parquet"
 METRICS_OUTPUT_PATH = "tarifacompleto_metrics.parquet"
