@@ -45,6 +45,27 @@ def histogram_bins(values: np.ndarray) -> int:
     return max(15, min(50, suggested))
 
 
+def add_bounded_reference_line(
+    figure: go.Figure,
+    value: float,
+    lower_bound: float,
+    upper_bound: float,
+    label: str,
+    color: str,
+    annotation_position: str,
+) -> None:
+    """Draw a full-distribution reference without expanding the central view."""
+    plotted_value = float(np.clip(value, lower_bound, upper_bound))
+    suffix = " (outside view)" if plotted_value != value else ""
+    figure.add_vline(
+        x=plotted_value,
+        line_dash="dash",
+        line_color=color,
+        annotation_text=f"{label}: {value:.2f}{suffix}",
+        annotation_position=annotation_position,
+    )
+
+
 def main() -> None:
     args = parse_args()
     dataset_path = Path(args.dataset).resolve()
@@ -123,34 +144,89 @@ def main() -> None:
     mape = metrics["mape_percent"]
     metric_columns[2].metric("MAPE", f"{mape:,.2f}%" if mape is not None else "Undefined")
 
-    mean_error = float(np.mean(errors))
-    median_error = float(np.median(errors))
-    bin_count = st.slider(
+    tail_controls = st.columns(2)
+    display_percentile = tail_controls[0].slider(
+        "Central distribution shown (%)",
+        min_value=90.0,
+        max_value=100.0,
+        value=99.5,
+        step=0.1,
+        help="Rows outside this central range remain included in metrics and tail summaries.",
+    )
+    if error_mode == "Signed error":
+        magnitude_cutoff = float(np.percentile(np.abs(errors), display_percentile))
+        display_mask = np.abs(errors) <= magnitude_cutoff
+        display_lower, display_upper = -magnitude_cutoff, magnitude_cutoff
+        negative_tail = int((errors < display_lower).sum())
+        positive_tail = int((errors > display_upper).sum())
+        tail_description = (
+            f"{negative_tail + positive_tail:,} rows outside the central view "
+            f"({negative_tail:,} negative, {positive_tail:,} positive)."
+        )
+        summary_errors = np.abs(errors)
+        summary_prefix = "|error|"
+    else:
+        display_upper = float(np.percentile(errors, display_percentile))
+        display_lower = float(np.min(errors))
+        display_mask = errors <= display_upper
+        tail_count = int((~display_mask).sum())
+        tail_description = (
+            f"{tail_count:,} rows above the {display_percentile:.1f}th-percentile "
+            "cutoff."
+        )
+        summary_errors = errors
+        summary_prefix = "Error"
+
+    if np.isclose(display_lower, display_upper):
+        padding = max(abs(display_lower) * 0.05, 1.0)
+        display_lower -= padding
+        display_upper += padding
+
+    displayed_errors = errors[display_mask]
+    bin_count = tail_controls[1].slider(
         "Histogram bins",
         min_value=10,
         max_value=80,
-        value=histogram_bins(errors),
+        value=histogram_bins(displayed_errors),
     )
+    quantile_90_summary, quantile_95_summary, quantile_99_summary = np.quantile(
+        summary_errors,
+        [0.90, 0.95, 0.99],
+    )
+    tail_metrics = st.columns(5)
+    tail_metrics[0].metric(f"{summary_prefix} P90", f"{quantile_90_summary:,.2f}")
+    tail_metrics[1].metric(f"{summary_prefix} P95", f"{quantile_95_summary:,.2f}")
+    tail_metrics[2].metric(f"{summary_prefix} P99", f"{quantile_99_summary:,.2f}")
+    tail_metrics[3].metric(f"Maximum {summary_prefix.lower()}", f"{summary_errors.max():,.2f}")
+    tail_metrics[4].metric("Rows outside view", f"{int((~display_mask).sum()):,}")
+    st.caption(tail_description)
+
+    mean_error = float(np.mean(errors))
+    median_error = float(np.median(errors))
     figure = px.histogram(
-        pd.DataFrame({"error": errors}),
+        pd.DataFrame({"error": displayed_errors}),
         x="error",
         nbins=bin_count,
-        title=f"{selected_target}: {error_mode}",
+        title=f"{selected_target}: {error_mode} central distribution",
         labels={"error": axis_title},
     )
-    figure.add_vline(
-        x=mean_error,
-        line_dash="dash",
-        line_color="darkred",
-        annotation_text=f"Mean: {mean_error:.2f}",
-        annotation_position="top right",
+    add_bounded_reference_line(
+        figure,
+        mean_error,
+        display_lower,
+        display_upper,
+        "Mean",
+        "darkred",
+        "top right",
     )
-    figure.add_vline(
-        x=median_error,
-        line_dash="dash",
-        line_color="black",
-        annotation_text=f"Median: {median_error:.2f}",
-        annotation_position="top left",
+    add_bounded_reference_line(
+        figure,
+        median_error,
+        display_lower,
+        display_upper,
+        "Median",
+        "black",
+        "top left",
     )
     if error_mode == "Signed error":
         figure.add_vline(x=0, line_color="gray", line_width=1)
@@ -165,37 +241,60 @@ def main() -> None:
 
     sorted_errors = np.sort(errors)
     cumulative_probability = np.arange(1, len(sorted_errors) + 1) / len(sorted_errors)
+    use_log_cdf = False
+    if error_mode != "Signed error":
+        use_log_cdf = st.checkbox(
+            "Use logarithmic CDF x-axis",
+            value=True,
+            help="Shows the complete positive tail without compressing it into a linear axis.",
+        )
+    cdf_x = sorted_errors
+    cdf_y = cumulative_probability
+    if use_log_cdf:
+        positive = cdf_x > 0
+        if positive.any():
+            cdf_x = cdf_x[positive]
+            cdf_y = cdf_y[positive]
+        else:
+            use_log_cdf = False
     quantile_90, quantile_95 = np.quantile(errors, [0.90, 0.95])
     cdf_figure = go.Figure(
         go.Scatter(
-            x=sorted_errors,
-            y=cumulative_probability,
+            x=cdf_x,
+            y=cdf_y,
             mode="lines",
             line={"color": "steelblue", "width": 2},
             name="Empirical CDF",
         )
     )
-    cdf_figure.add_vline(
-        x=float(quantile_90),
-        line_dash="dash",
-        line_color="darkorange",
-        annotation_text=f"90%: {quantile_90:.2f}",
-        annotation_position="top left",
-    )
-    cdf_figure.add_vline(
-        x=float(quantile_95),
-        line_dash="dash",
-        line_color="darkred",
-        annotation_text=f"95%: {quantile_95:.2f}",
-        annotation_position="top right",
-    )
+    if not use_log_cdf or quantile_90 > 0:
+        cdf_figure.add_vline(
+            x=float(quantile_90),
+            line_dash="dash",
+            line_color="darkorange",
+            annotation_text=f"90%: {quantile_90:.2f}",
+            annotation_position="top left",
+        )
+    if not use_log_cdf or quantile_95 > 0:
+        cdf_figure.add_vline(
+            x=float(quantile_95),
+            line_dash="dash",
+            line_color="darkred",
+            annotation_text=f"95%: {quantile_95:.2f}",
+            annotation_position="top right",
+        )
+    cdf_view = "full log view" if use_log_cdf else "central linear view"
     cdf_figure.update_layout(
-        title=f"{selected_target}: empirical error CDF",
+        title=f"{selected_target}: empirical error CDF ({cdf_view})",
         xaxis_title=axis_title,
         yaxis_title="Cumulative probability",
         yaxis={"range": [0, 1.01], "tickformat": ".0%"},
         height=460,
     )
+    if use_log_cdf:
+        cdf_figure.update_xaxes(type="log")
+    else:
+        cdf_figure.update_xaxes(range=[display_lower, display_upper])
     st.plotly_chart(cdf_figure, width="stretch")
 
 

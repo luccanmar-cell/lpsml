@@ -73,134 +73,6 @@ def compute_multioutput_metrics(
     }
 
 
-def _histogram_bins(values: np.ndarray) -> int:
-    """Use Freedman-Diaconis resolution with practical lower and upper bounds."""
-    if len(values) < 2 or np.all(values == values[0]):
-        return 20
-    suggested = len(np.histogram_bin_edges(values, bins="fd")) - 1
-    return max(20, min(100, suggested))
-
-
-def _plot_error_histogram(
-    axis: Any,
-    values: np.ndarray,
-    title: str,
-    xlabel: str,
-    color: str,
-) -> None:
-    """Plot the central distribution clearly while explicitly counting tail values."""
-    finite_values = values[np.isfinite(values)]
-    if not len(finite_values):
-        axis.text(
-            0.5,
-            0.5,
-            "No nonzero target values; percentage error is undefined",
-            transform=axis.transAxes,
-            ha="center",
-            va="center",
-        )
-        axis.set_title(title)
-        axis.set_xlabel(xlabel)
-        axis.set_ylabel("Count")
-        return
-
-    display_limit = float(np.percentile(finite_values, 99.5))
-    displayed = finite_values[finite_values <= display_limit]
-    if not len(displayed):
-        displayed = finite_values
-
-    counts, _, _ = axis.hist(
-        displayed,
-        bins=_histogram_bins(displayed),
-        color=color,
-        edgecolor="white",
-        linewidth=0.4,
-    )
-    median = float(np.median(finite_values))
-    percentile_90 = float(np.percentile(finite_values, 90))
-    axis.axvline(median, color="black", linestyle="--", label=f"Median: {median:.2f}")
-    axis.axvline(
-        percentile_90,
-        color="darkred",
-        linestyle=":",
-        label=f"90th percentile: {percentile_90:.2f}",
-    )
-
-    positive_counts = counts[counts > 0]
-    if len(positive_counts) and positive_counts.max() / np.median(positive_counts) >= 20:
-        axis.set_yscale("log")
-        axis.set_ylabel("Count (log scale)")
-    else:
-        axis.set_ylabel("Count")
-
-    tail_omitted = len(finite_values) - len(displayed)
-    undefined = len(values) - len(finite_values)
-    notes: list[str] = []
-    if tail_omitted:
-        notes.append(f"{tail_omitted} values above the 99.5th percentile not shown")
-    if undefined:
-        notes.append(f"{undefined} zero-target rows have undefined percentage error")
-    if notes:
-        axis.text(
-            0.98,
-            0.96,
-            "\n".join(notes),
-            transform=axis.transAxes,
-            ha="right",
-            va="top",
-            fontsize=9,
-        )
-
-    axis.set_title(title)
-    axis.set_xlabel(xlabel)
-    axis.grid(axis="y", alpha=0.2)
-    axis.legend()
-
-
-def save_error_distribution_plot(
-    y_true: Iterable[float],
-    y_pred: Iterable[float],
-    model_name: str,
-    output_path: str | Path,
-) -> Path:
-    """Save side-by-side absolute and percentage-error histograms."""
-    actual = np.asarray(y_true, dtype=float)
-    predicted = np.asarray(y_pred, dtype=float)
-    absolute_errors = np.abs(actual - predicted)
-    percentage_errors = absolute_percentage_errors(actual, predicted)
-    metrics = compute_regression_metrics(actual, predicted)
-
-    path = Path(output_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    figure, axes = plt.subplots(1, 2, figsize=(14, 5), constrained_layout=True)
-    _plot_error_histogram(
-        axes[0],
-        absolute_errors,
-        "Absolute error distribution",
-        "Absolute error",
-        "steelblue",
-    )
-    _plot_error_histogram(
-        axes[1],
-        percentage_errors,
-        "Absolute percentage error distribution",
-        "Absolute percentage error (%)",
-        "darkorange",
-    )
-    mape_text = (
-        f"{metrics['mape_percent']:.2f}%"
-        if metrics["mape_percent"] is not None
-        else "undefined"
-    )
-    figure.suptitle(
-        f"{model_name} test errors | MSE={metrics['mse']:.2f} | "
-        f"MAE={metrics['mae']:.2f} | MAPE={mape_text}"
-    )
-    figure.savefig(path, dpi=160)
-    plt.close(figure)
-    return path
-
-
 def save_grouped_mape_bar_plot(
     categories: Iterable[Any],
     y_true: Iterable[float],
@@ -266,11 +138,10 @@ def create_scored_dataset(
     if split.isna().any():
         raise ValueError("Some dataset rows were not assigned to train or test.")
 
-    rounded_components = np.round(component_predictions, 2)
     for index, component in enumerate(component_targets.columns):
-        scored[f"{component} Prediction"] = rounded_components[:, index]
+        scored[f"{component} Prediction"] = component_predictions[:, index]
 
-    final_predictions = np.round(rounded_components.sum(axis=1), 2)
+    final_predictions = component_predictions.sum(axis=1)
     scored["Prediction"] = final_predictions
     scored["Absolute Percent Error"] = absolute_percentage_errors(
         scored[total_target_column],

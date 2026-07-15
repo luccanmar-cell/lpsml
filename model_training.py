@@ -48,7 +48,8 @@ def print_search_results(results: list[dict[str, Any]]) -> None:
     print("\nCross-validation results (training split only):")
     for result in results:
         print(
-            f"  {result['model']} | scaler={result['scaler']} | "
+            f"  {result['model']} | multi-output={result['multioutput_strategy']} | "
+            f"scaler={result['scaler']} | "
             f"balanced MSE={result['cv_balanced_mse']:.4f} | "
             f"params={result['best_params']}"
         )
@@ -57,7 +58,7 @@ def print_search_results(results: list[dict[str, Any]]) -> None:
 def best_result_per_model_type(
     results: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    """Keep the lowest-CV-MSE scaler/configuration for each model type."""
+    """Keep the lowest-CV balanced-MSE configuration for each model type."""
     best_by_type: dict[str, dict[str, Any]] = {}
     for result in results:
         current = best_by_type.get(result["model_type"])
@@ -163,7 +164,9 @@ def main() -> None:
             "run_timestamp": run_time.isoformat(),
             "model": result["model"],
             "model_type": result["model_type"],
+            "multioutput_strategy": result["multioutput_strategy"],
             "scaler": result["scaler"],
+            "search_trials": result["search_trials"],
             "cv_balanced_mse": result["cv_balanced_mse"],
             "best_params": result["best_params"],
             "test_metrics": metrics,
@@ -212,6 +215,7 @@ def main() -> None:
             "train_rows": len(x_train),
             "test_rows": len(x_test),
             "overall_best_model_type": best_result["model_type"],
+            "overall_best_multioutput_strategy": best_result["multioutput_strategy"],
             "overall_best_scaler": best_result["scaler"],
             "overall_best_params": best_result["best_params"],
             "overall_best_cv_balanced_mse": best_result["cv_balanced_mse"],

@@ -193,6 +193,17 @@ def fill_missing_feature_values(
     return filled
 
 
+def drop_duplicate_model_rows(
+    df: pd.DataFrame,
+    identity_columns: Iterable[str] = ("NroPoliza",),
+) -> tuple[pd.DataFrame, int]:
+    """Drop repeated modeling rows while retaining the first row's identifier."""
+    identities = set(identity_columns)
+    comparison_columns = [column for column in df.columns if column not in identities]
+    duplicate_mask = df.duplicated(subset=comparison_columns, keep="first")
+    return df.loc[~duplicate_mask].copy(), int(duplicate_mask.sum())
+
+
 def build_model_dataset(
     raw_df: pd.DataFrame,
     target_column: str | None = None,
@@ -215,6 +226,12 @@ def build_model_dataset(
     reporting_columns: list[str] = []
     if "Cobertura" in df.columns:
         df["CoberturaLabel"] = df["Cobertura"].map(cobertura_label).astype("string")
+        cobertura_features = pd.get_dummies(
+            df["CoberturaLabel"],
+            prefix="Cobertura",
+            dtype=np.int8,
+        )
+        df = pd.concat([df.drop(columns=["Cobertura"]), cobertura_features], axis=1)
         reporting_columns.append("CoberturaLabel")
 
     if "Pol6TTaCod" in df.columns:
@@ -236,6 +253,7 @@ def build_model_dataset(
         exclude_columns=[*target_columns, *reporting_columns],
     )
     df = fill_missing_feature_values(df, target_columns=target_columns)
+    df, duplicate_rows_removed = drop_duplicate_model_rows(df)
     feature_columns = [column for column in df.columns if column not in target_columns]
     df = df[[*feature_columns, *target_columns]]
 
@@ -245,6 +263,7 @@ def build_model_dataset(
         "target_columns": target_columns,
         "reporting_columns": reporting_columns,
         "dropped_columns": columns_to_drop,
+        "duplicate_rows_removed": duplicate_rows_removed,
         "row_count": len(df),
         "column_count": len(df.columns),
     }

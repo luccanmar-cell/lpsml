@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
+os.environ.setdefault("LOKY_MAX_CPU_COUNT", str(os.cpu_count() or 1))
+
+from joblib import effective_n_jobs, parallel_backend
 import numpy as np
+import pandas as pd
 from sklearn.base import BaseEstimator, clone
 from sklearn.ensemble import (
     ExtraTreesRegressor,
@@ -33,6 +37,12 @@ MODEL_TYPES: dict[str, type[BaseEstimator]] = {
     "hist_gradient_boosting": HistGradientBoostingRegressor,
     "random_forest": RandomForestRegressor,
     "ridge": Ridge,
+}
+
+NATIVE_MULTIOUTPUT_MODEL_TYPES = {
+    "extra_trees",
+    "random_forest",
+    "ridge",
 }
 
 SCALER_TYPES: dict[str, type[BaseEstimator] | None] = {
@@ -105,13 +115,18 @@ def build_pipeline(
         raise ValueError(f"Unsupported scaler type '{scaler_type}'. Choose from: {supported}.")
 
     base_model = MODEL_TYPES[model_type](**(fixed_params or {}))
-    model = MultiOutputRegressor(base_model, n_jobs=1)
+    model = (
+        base_model
+        if model_type in NATIVE_MULTIOUTPUT_MODEL_TYPES
+        else MultiOutputRegressor(base_model, n_jobs=1)
+    )
     scaler_class = SCALER_TYPES[scaler_type]
     scaler: BaseEstimator | str = scaler_class() if scaler_class else "passthrough"
     return Pipeline([("scaler", scaler), ("model", model)])
 
 
 def build_parameter_grid(
+    pipeline: Pipeline,
     parameter_grid: dict[str, list[Any]] | None,
 ) -> dict[str, list[Any]]:
     """Prefix model parameters for GridSearchCV's Cartesian-product grid."""
@@ -122,7 +137,13 @@ def build_parameter_grid(
             "Every parameter grid value must be a JSON list. Invalid parameters: "
             + ", ".join(invalid_parameters)
         )
-    return {f"model__estimator__{name}": values for name, values in grid.items()}
+    prefix = model_parameter_prefix(pipeline)
+    return {f"{prefix}{name}": values for name, values in grid.items()}
+
+
+def model_parameter_prefix(pipeline: Pipeline) -> str:
+    """Return the parameter path for native or wrapped multi-output estimators."""
+    return "model__estimator__" if "model__estimator" in pipeline.get_params() else "model__"
 
 
 def balanced_multioutput_mse(
@@ -156,6 +177,30 @@ def make_balanced_mse_scorer(final_weight: float) -> Any:
         greater_is_better=False,
         final_weight=final_weight,
     )
+
+
+def configure_tuning_parallelism(
+    pipeline: Pipeline,
+    outer_n_jobs: int,
+) -> tuple[Pipeline, int]:
+    """Bound nested estimator threads so concurrent CV fits share CPUs predictably."""
+    if outer_n_jobs == 0:
+        raise ValueError("cv.n_jobs cannot be 0.")
+
+    outer_workers = effective_n_jobs(outer_n_jobs)
+    inner_threads = max(1, (os.cpu_count() or 1) // outer_workers)
+    parallel_params: dict[str, int] = {}
+    wrapped_model = "model__estimator" in pipeline.get_params()
+    for name in pipeline.get_params():
+        if not (name.startswith("model__") and name.endswith("n_jobs")):
+            continue
+        is_wrapper_worker = wrapped_model and name == "model__n_jobs"
+        parallel_params[name] = 1 if is_wrapper_worker else inner_threads
+
+    configured = clone(pipeline)
+    if parallel_params:
+        configured.set_params(**parallel_params)
+    return configured, inner_threads
 
 
 def suggest_optuna_parameters(
@@ -200,20 +245,33 @@ def run_grid_search(
     scorer: Any,
 ) -> tuple[Pipeline, dict[str, Any], float]:
     """Exhaustively select parameters using balanced component/final MSE."""
+    search_pipeline, inner_threads = configure_tuning_parallelism(pipeline, n_jobs)
+
     search = GridSearchCV(
-        estimator=pipeline,
-        param_grid=build_parameter_grid(model_config.get("param_grid")),
+        estimator=search_pipeline,
+        param_grid=build_parameter_grid(
+            search_pipeline,
+            model_config.get("param_grid"),
+        ),
         scoring=scorer,
         cv=cv,
         n_jobs=n_jobs,
-        refit=True,
+        pre_dispatch=n_jobs if n_jobs > 0 else "n_jobs",
+        refit=False,
     )
-    search.fit(x_train, y_train)
+    with parallel_backend("loky", inner_max_num_threads=inner_threads):
+        search.fit(x_train, y_train)
+    search_prefix = model_parameter_prefix(search_pipeline)
     best_params = {
-        name.removeprefix("model__estimator__"): value
+        name.removeprefix(search_prefix): value
         for name, value in search.best_params_.items()
     }
-    return search.best_estimator_, best_params, -float(search.best_score_)
+    final_prefix = model_parameter_prefix(pipeline)
+    best_pipeline = clone(pipeline).set_params(
+        **{f"{final_prefix}{name}": value for name, value in best_params.items()}
+    )
+    best_pipeline.fit(x_train, y_train)
+    return best_pipeline, best_params, -float(search.best_score_)
 
 
 def run_optuna_search(
@@ -227,12 +285,18 @@ def run_optuna_search(
     random_state: int,
     scorer: Any,
 ) -> tuple[Pipeline, dict[str, Any], float]:
-    """Use Optuna to minimize cross-validated MSE."""
+    """Use Optuna to minimize cross-validated balanced MSE."""
     if optuna is None:
         raise RuntimeError("Optuna search requires the optional 'optuna' package.")
 
     search_space = model_config.get("optuna_space", model_config.get("param_grid", {}))
     trial_n_jobs = int(search_config.get("trial_n_jobs", 1))
+    if trial_n_jobs != 1:
+        raise ValueError(
+            "Parallel Optuna trials are disabled to prevent trials, CV folds, and "
+            "native estimator threads from competing. Keep search.trial_n_jobs at 1 "
+            "and use cv.n_jobs for parallel tuning."
+        )
     trial_cv_n_jobs = n_jobs
     pipeline_params = pipeline.get_params()
     model_n_jobs = {
@@ -240,39 +304,48 @@ def run_optuna_search(
         for name, value in pipeline_params.items()
         if name.startswith("model__") and name.endswith("n_jobs")
     }
-    if trial_n_jobs != 1:
-        # Parallelize at one level only to avoid multiplying trial, CV, and model workers.
-        trial_cv_n_jobs = 1
-        pipeline.set_params(**{name: 1 for name in model_n_jobs})
+    tuning_pipeline, inner_threads = configure_tuning_parallelism(
+        pipeline,
+        trial_cv_n_jobs,
+    )
 
     def objective(trial: Any) -> float:
         parameters = suggest_optuna_parameters(trial, search_space)
-        candidate = clone(pipeline).set_params(
-            **{f"model__estimator__{name}": value for name, value in parameters.items()}
+        tuning_prefix = model_parameter_prefix(tuning_pipeline)
+        candidate = clone(tuning_pipeline).set_params(
+            **{f"{tuning_prefix}{name}": value for name, value in parameters.items()}
         )
-        scores = cross_val_score(
-            candidate,
-            x_train,
-            y_train,
-            scoring=scorer,
-            cv=cv,
-            n_jobs=trial_cv_n_jobs,
-        )
+        with parallel_backend("loky", inner_max_num_threads=inner_threads):
+            scores = cross_val_score(
+                candidate,
+                x_train,
+                y_train,
+                scoring=scorer,
+                cv=cv,
+                n_jobs=trial_cv_n_jobs,
+                pre_dispatch=(
+                    trial_cv_n_jobs if trial_cv_n_jobs > 0 else "n_jobs"
+                ),
+            )
         return -float(scores.mean())
 
     sampler = optuna.samplers.TPESampler(seed=random_state)
     study = optuna.create_study(direction="minimize", sampler=sampler)
     study.optimize(
         objective,
-        n_trials=int(search_config.get("n_trials", 100)),
-        timeout=search_config.get("timeout_seconds"),
+        n_trials=int(model_config.get("n_trials", search_config.get("n_trials", 100))),
+        timeout=model_config.get(
+            "timeout_seconds",
+            search_config.get("timeout_seconds"),
+        ),
         show_progress_bar=bool(search_config.get("show_progress_bar", False)),
         n_jobs=trial_n_jobs,
     )
 
     best_params = dict(study.best_trial.params)
+    final_prefix = model_parameter_prefix(pipeline)
     best_pipeline = clone(pipeline).set_params(
-        **{f"model__estimator__{name}": value for name, value in best_params.items()}
+        **{f"{final_prefix}{name}": value for name, value in best_params.items()}
     )
     best_pipeline.set_params(**model_n_jobs)
     best_pipeline.fit(x_train, y_train)
@@ -284,7 +357,7 @@ def search_models(
     y_train: pd.DataFrame,
     config: dict[str, Any],
 ) -> tuple[Pipeline, dict[str, Any], list[dict[str, Any]]]:
-    """Select a model by cross-validated training MSE using grid or Optuna."""
+    """Select a model by cross-validated training balanced MSE."""
     cv_config = config.get("cv", {})
     search_config = config.get("search", {})
     search_method = search_config.get("method", "grid")
@@ -335,8 +408,23 @@ def search_models(
                 {
                     "model": model_name,
                     "model_type": model_config["type"],
+                    "multioutput_strategy": (
+                        "native"
+                        if model_config["type"] in NATIVE_MULTIOUTPUT_MODEL_TYPES
+                        else "wrapped"
+                    ),
                     "scaler": scaler_type,
                     "search_method": search_method,
+                    "search_trials": (
+                        int(
+                            model_config.get(
+                                "n_trials",
+                                search_config.get("n_trials", 100),
+                            )
+                        )
+                        if search_method == "optuna"
+                        else None
+                    ),
                     "cv_balanced_mse": cv_mse,
                     "best_params": best_params,
                     "estimator": estimator,

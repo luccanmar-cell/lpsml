@@ -116,6 +116,7 @@ def main() -> None:
     print(f"Total target: {metadata['target_column']}")
     print(f"Reporting labels: {metadata['reporting_columns']}")
     print(f"Dropped columns: {metadata['dropped_columns']}")
+    print(f"Duplicate modeling rows removed: {metadata['duplicate_rows_removed']}")
     print("\nDataset preview:")
     print(clean_dataset.head())
 
