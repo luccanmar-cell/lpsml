@@ -4,8 +4,10 @@
 *.xls
 *.xlsm
 *.xlsb
-~$*.xls*
 
 # Python cache files.
 __pycache__/
 *.py[cod]
+
+# Timestamped model-training artifacts.
+training_runs/
