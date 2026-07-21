@@ -50,12 +50,12 @@ python -m pip install -r requirements.txt
 
 Place your raw Excel file in the project root. The default expected file is:
 
-tarifacompleto.xlsx
+ADS1436160159821391600.xlsx
 
 Convert it into a processed parquet dataset:
 
 ```powershell
-python build_dataset.py tarifacompleto.xlsx -o tarifacompleto.parquet
+python build_dataset.py ADS1436160159821391600.xlsx -o ADS1436160159821391600.parquet
 ```
 
 This script will:
@@ -64,17 +64,17 @@ build a modeling-ready dataset,
 save a clean parquet file,
 save a separate doubtful rows parquet file (for review).
 
-The main file to use for training is the clean parquet output, usually: tarifacompleto.parquet
+The main file to use for training is the clean parquet output, usually: ADS1436160159821391600.parquet
 
 
 Run the training pipeline with the processed parquet file:
 
 ```powershell
-python model_training.py tarifacompleto.parquet --search grid
+python model_training.py ADS1436160159821391600.parquet --search grid
 ```
 
 ```powershell
-python model_training.py .\tarifacompleto.parquet --search optuna
+python model_training.py .\ADS1436160159821391600.parquet --search optuna
 ```
 
 This step will create a new folder inside the training_runs directory with a timestamp, for example:
@@ -147,28 +147,28 @@ python -m pip install -r requirements.txt
 
 Coloca tu archivo Excel original en la raíz del proyecto.
 
-tarifacompleto.xlsx
+ADS1436160159821391600.xlsx
 
 Conviértelo en un conjunto de datos procesado en formato parquet:
 
 ```powershell
-python build_dataset.py tarifacompleto.xlsx -o tarifacompleto.parquet
+python build_dataset.py ADS1436160159821391600.xlsx -o ADS1436160159821391600.parquet
 ```
 
 Este script realizará las siguientes acciones:
 leerá el archivo Excel,
 creará un conjunto de datos listo para el modelado,
 guardará un archivo parquet limpio,
-guardará un archivo parquet separado con las filas dudosas (para su revisión). El archivo principal que se debe utilizar para el entrenamiento es el archivo Parquet limpio resultante, generalmente: `tarifacompleto.parquet`
+guardará un archivo parquet separado con las filas dudosas (para su revisión). El archivo principal que se debe utilizar para el entrenamiento es el archivo Parquet limpio resultante, generalmente: `ADS1436160159821391600.parquet`
 
 Ejecuta la canalización de entrenamiento con el archivo Parquet procesado:
 
 ```powershell
-python model_training.py tarifacompleto.parquet --search grid
+python model_training.py ADS1436160159821391600.parquet --search grid
 ```
 
 ```powershell
-python model_training.py .\tarifacompleto.parquet --search optuna
+python model_training.py .\ADS1436160159821391600.parquet --search optuna
 ```
 
 Este paso creará una nueva carpeta dentro del directorio `training_runs` con una marca de tiempo; por ejemplo:
