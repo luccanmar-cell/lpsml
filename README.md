@@ -62,7 +62,7 @@ This script will:
 read the Excel file,
 build a modeling-ready dataset,
 save a clean parquet file,
-save a separate doubtful rows parquet file (for review).
+save a separate doubtful rows parquet file for review.
 
 The main file to use for training is the clean parquet output, usually: ADS1436160159821391600.parquet
 
@@ -94,6 +94,28 @@ python launch_dashboard.py .\training_runs\20260717_111503_523873\scored_dataset
 ```
 
 The dashboard expects a scored parquet file produced by model_training.py, it will open a Streamlit app.
+
+Compare predictions after modifying input features
+
+Use the sensitivity script to load a saved model, score one or more rows, and compare predictions before and after editing feature values.
+
+```powershell
+python predict_sensitivity.py .\training_runs\20260722_165453_775034\elastic_net\model.joblib .\ADS1436160159821391600.parquet --config .\model_training_config.json --rows 0 --modify "ValorAsegurado=500000"
+```
+
+You can also save the report to a JSON file:
+
+```powershell
+python predict_sensitivity.py .\training_runs\20260722_165453_775034\elastic_net\model.joblib .\ADS1436160159821391600.parquet --config .\model_training_config.json --rows 0 --modify "ValorAsegurado=500000" --output sensitivity_report.json
+```
+
+To export the modified rows as a parquet file, add `--parquet-output`:
+
+```powershell
+python predict_sensitivity.py .\training_runs\20260722_165453_775034\elastic_net\model.joblib .\ADS1436160159821391600.parquet --config .\model_training_config.json --rows 0 --modify "ValorAsegurado=500000" --parquet-output sensitivity_output.parquet
+```
+
+The script accepts either global changes (for example, `ValorAsegurado=500000`) or row-specific changes (for example, `3:ValorAsegurado=500000`).
 
 Espanol:
 
@@ -159,7 +181,8 @@ Este script realizará las siguientes acciones:
 leerá el archivo Excel,
 creará un conjunto de datos listo para el modelado,
 guardará un archivo parquet limpio,
-guardará un archivo parquet separado con las filas dudosas (para su revisión). El archivo principal que se debe utilizar para el entrenamiento es el archivo Parquet limpio resultante, generalmente: `ADS1436160159821391600.parquet`
+guardará un archivo parquet separado con las filas dudosas para su revisión.
+El archivo principal que se debe utilizar para el entrenamiento es el archivo Parquet limpio resultante, generalmente: `ADS1436160159821391600.parquet`
 
 Ejecuta la canalización de entrenamiento con el archivo Parquet procesado:
 
@@ -188,3 +211,25 @@ python launch_dashboard.py .\training_runs\20260717_111503_523873\scored_dataset
 ```
 
 El panel de control espera un archivo Parquet con puntuaciones generado por `model_training.py`, se abrirá una aplicación Streamlit.
+
+Comparar predicciones después de modificar características de entrada
+
+Utiliza el script de sensibilidad para cargar un modelo guardado, evaluar una o varias filas y comparar las predicciones antes y después de editar los valores de las características.
+
+```powershell
+python predict_sensitivity.py .\training_runs\20260722_165453_775034\elastic_net\model.joblib .\ADS1436160159821391600.parquet --config .\model_training_config.json --rows 0 --modify "ValorAsegurado=500000"
+```
+
+También puedes guardar el reporte en un archivo JSON:
+
+```powershell
+python predict_sensitivity.py .\training_runs\20260722_165453_775034\elastic_net\model.joblib .\ADS1436160159821391600.parquet --config .\model_training_config.json --rows 0 --modify "ValorAsegurado=500000" --output sensitivity_report.json
+```
+
+Para exportar las filas modificadas como un archivo parquet, añade `--parquet-output`:
+
+```powershell
+python predict_sensitivity.py .\training_runs\20260722_165453_775034\elastic_net\model.joblib .\ADS1436160159821391600.parquet --config .\model_training_config.json --rows 0 --modify "ValorAsegurado=500000" --parquet-output sensitivity_output.parquet
+```
+
+El script acepta cambios globales (por ejemplo, `ValorAsegurado=500000`) o cambios específicos por fila (por ejemplo, `3:ValorAsegurado=500000`).
