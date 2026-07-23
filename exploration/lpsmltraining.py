@@ -26,7 +26,7 @@ parameter_grid = [
     {"n_estimators": 200, "max_depth": 5},
     {"n_estimators": 200, "max_depth": 10},
 ]
-
+X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
 for params in parameter_grid:
     pipeline = make_pipeline(
         StandardScaler(),
@@ -40,8 +40,8 @@ for params in parameter_grid:
 
     scores = cross_val_score(
         pipeline,
-        X,
-        Y,
+        X_train,
+        Y_train,
         cv=cv,
         scoring="neg_mean_absolute_error",
         n_jobs=-1,
@@ -59,6 +59,5 @@ for params in parameter_grid:
 
 print(f"Best cross-validated MAE: {best_result:.4f}")
 
-X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=42)
 best_model.fit(X_train, Y_train)
 computemetrics(best_model, X_test, Y_test, X_train)

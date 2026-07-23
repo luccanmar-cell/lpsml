@@ -36,13 +36,13 @@ def computemetrics(model, X_test, Y_test, X_train):
             where=np.abs(y_true) > 0,
         ) * 100
     
-    df["Prima Previsto"] = np.nan
+    df["Prima Prevista"] = np.nan
     df["Porcentaje Error"] = np.nan
     
     test_indices = Y_test.index.tolist()
     
     for idx, pred, error in zip(test_indices, pred_values, percentage_error):
-        df.loc[idx, "Prima Previsto"] = float(pred)
+        df.loc[idx, "Prima Prevista"] = float(pred)
         df.loc[idx, "Porcentaje Error"] = float(error)
 
     if "NroPoliza" in df.columns:
