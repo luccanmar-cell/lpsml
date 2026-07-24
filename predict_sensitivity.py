@@ -1,5 +1,27 @@
 from __future__ import annotations
 
+"""Sensitivity analysis utility for a trained model.
+
+This script compares predictions before and after changing one or more feature values
+in selected rows. It is useful when you want to inspect how a model reacts to a
+small scenario change such as increasing an insured amount or modifying a categorical
+feature.
+
+Typical usage:
+    python predict_sensitivity.py model.joblib dataset.parquet \
+        --config model_training_config.json \
+        --rows 0 3 \
+        --modify "ValorAsegurado=500000" \
+        --output sensitivity_report.json \
+        --parquet-output modified_rows.parquet
+
+The script performs four main steps:
+1. Loads the model and the processed dataset.
+2. Selects the requested rows.
+3. Applies the requested changes to the feature values.
+4. Compares baseline and modified predictions and optionally exports the results.
+"""
+
 import argparse
 import json
 import re
@@ -14,6 +36,12 @@ from training_utils import load_json_config, load_training_data
 
 
 def parse_args() -> argparse.Namespace:
+    """Define the command-line interface and explain how to run the script.
+
+    Use this function when you want to call the script from a terminal or from another
+    automation workflow. The arguments let you choose the model, dataset, rows to inspect,
+    and the feature changes to apply.
+    """
     parser = argparse.ArgumentParser(
         description=(
             "Load a trained model, modify selected rows, compare baseline vs. "
@@ -62,7 +90,12 @@ def parse_args() -> argparse.Namespace:
 
 
 def parse_modification_specs(specs: list[str]) -> list[tuple[int | None, str, Any]]:
-    """Parse specs in the form 'column=value' or 'row:column=value'."""
+    """Convert user-friendly change instructions into structured values.
+
+    Examples:
+    - "ValorAsegurado=500000" changes the named column for all selected rows.
+    - "3:ValorAsegurado=500000" changes only row 3 in the selected set.
+    """
     parsed: list[tuple[int | None, str, Any]] = []
     pattern = re.compile(r"^(?:(?P<row>\d+):)?(?P<column>.+?)=(?P<value>.+)$")
 
@@ -88,7 +121,11 @@ def parse_modification_specs(specs: list[str]) -> list[tuple[int | None, str, An
 
 
 def apply_modifications(frame: pd.DataFrame, specs: list[tuple[int | None, str, Any]]) -> pd.DataFrame:
-    """Apply the parsed modifications to a copy of the supplied frame."""
+    """Apply the requested changes to a copy of the dataframe.
+
+    This function does not mutate the original data; it returns a modified copy so the
+    baseline and altered scenarios can be compared safely.
+    """
     modified = frame.copy()
     for row_index, column, value in specs:
         if row_index is None:
@@ -106,7 +143,11 @@ def apply_modifications(frame: pd.DataFrame, specs: list[tuple[int | None, str, 
 
 
 def align_features_to_model(frame: pd.DataFrame, model: Any) -> pd.DataFrame:
-    """Reorder columns to match the fitted model and fill missing columns with zeros."""
+    """Ensure the input columns match the trained model's expected feature order.
+
+    Models trained with scikit-learn often store the feature names used during fitting.
+    This helper reorders the columns so the prediction step receives the same structure.
+    """
     expected_columns = list(getattr(model, "feature_names_in_", []))
     if not expected_columns:
         return frame.copy()
@@ -125,7 +166,12 @@ def build_prediction_report(
     modification_specs: list[tuple[int | None, str, Any]],
     identity_column: str | None = None,
 ) -> dict[str, Any]:
-    """Load the model, score selected rows, and compare baseline vs. modified predictions."""
+    """Create the report that compares original and modified predictions.
+
+    This is the main workflow for the script: it loads the model and data, applies the
+    requested changes, predicts both versions, and returns the differences in a report
+    structure that can be printed or exported.
+    """
     model_path = Path(model_path)
     dataset_path = Path(dataset_path)
     config_path = Path(config_path)
@@ -211,6 +257,12 @@ def build_prediction_report(
 
 
 def main() -> None:
+    """Run the sensitivity-analysis workflow from the command line.
+
+    This is the entry point used when the script is executed directly. It parses the
+    arguments, builds the comparison report, prints it to the console, and optionally
+    writes JSON or parquet outputs.
+    """
     args = parse_args()
     specs = parse_modification_specs(args.modify)
     report = build_prediction_report(
