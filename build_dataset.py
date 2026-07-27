@@ -3,13 +3,15 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
-from data_processing_utils import (
+from lpsml.data.processing import (
     DEFAULT_ACCESSORIES_COLUMN,
     build_model_dataset,
     load_excel_dataset,
     save_dataset_as_parquet,
-    split_prima_sum_consistency,
+    split_valid_model_rows,
 )
+
+SUPPORTED_WORKBOOK_SUFFIXES = {".xlsx", ".xlsm"}
 
 
 def parse_args() -> argparse.Namespace:
@@ -19,17 +21,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "filename",
         nargs="?",
-        default="ADS1436160159821391600.xlsx",
-        help="Path to the raw Excel file. Defaults to ADS1436160159821391600.xlsx.",
+        help=(
+            "Path to the raw Excel workbook. When omitted, uses the only "
+            "supported workbook under data/raw."
+        ),
     )
     parser.add_argument(
         "-o",
         "--output",
-        help="Output parquet path. Defaults to the input filename with a .parquet suffix.",
+        help=(
+            "Output parquet path. Defaults to data/processed/<input name>.parquet."
+        ),
     )
     parser.add_argument(
         "--doubtful-output",
-        help="Rows whose Prima component sum is inconsistent with the total.",
+        help="Rows that fail premium, coverage, or category-frequency checks.",
     )
     parser.add_argument(
         "--sum-tolerance",
@@ -38,16 +44,13 @@ def parse_args() -> argparse.Namespace:
         help="Maximum accepted absolute difference between component sum and Prima.",
     )
     parser.add_argument(
-        "--min-pol6tta-count",
+        "--min-pair-count",
         type=int,
         default=50,
-        help="Minimum full-dataset frequency required for each Pol6TTaCod category.",
-    )
-    parser.add_argument(
-        "--min-cobertura-count",
-        type=int,
-        default=50,
-        help="Minimum full-dataset frequency required for each Cobertura category.",
+        help=(
+            "Minimum number of otherwise valid rows required for each "
+            "Pol6TTaCod/Cobertura pair."
+        ),
     )
     parser.add_argument(
         "--target",
@@ -67,8 +70,44 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def resolve_input_path(
+    filename: str | None,
+    raw_directory: str | Path = "data/raw",
+) -> Path:
+    """Resolve an explicit workbook or discover the only workbook in data/raw."""
+    if filename:
+        return Path(filename)
+
+    directory = Path(raw_directory)
+    candidates = (
+        sorted(
+            (
+                path
+                for path in directory.iterdir()
+                if path.is_file()
+                and path.suffix.lower() in SUPPORTED_WORKBOOK_SUFFIXES
+            ),
+            key=lambda path: path.name.lower(),
+        )
+        if directory.is_dir()
+        else []
+    )
+    if len(candidates) == 1:
+        return candidates[0]
+    if not candidates:
+        raise FileNotFoundError(
+            f"No Excel workbook was found in {directory}. "
+            "Add one .xlsx or .xlsm file, or provide an explicit input path."
+        )
+    names = ", ".join(path.name for path in candidates)
+    raise ValueError(
+        f"Expected one Excel workbook in {directory}, found {len(candidates)}: "
+        f"{names}. Provide an explicit input path."
+    )
+
+
 def default_output_path(input_path: Path) -> Path:
-    return input_path.with_suffix(".parquet")
+    return Path("data/processed") / f"{input_path.stem}.parquet"
 
 
 def default_doubtful_output_path(output_path: Path) -> Path:
@@ -77,7 +116,7 @@ def default_doubtful_output_path(output_path: Path) -> Path:
 
 def main() -> None:
     args = parse_args()
-    input_path = Path(args.filename)
+    input_path = resolve_input_path(args.filename)
     output_path = Path(args.output) if args.output else default_output_path(input_path)
     doubtful_output_path = (
         Path(args.doubtful_output)
@@ -94,13 +133,12 @@ def main() -> None:
     )
     if "NroPoliza" in raw_df.columns and "NroPoliza" not in dataset.columns:
         dataset["NroPoliza"] = raw_df["NroPoliza"].astype(str).values
-    clean_dataset, doubtful_dataset = split_prima_sum_consistency(
+    clean_dataset, doubtful_dataset = split_valid_model_rows(
         dataset,
         metadata["component_target_columns"],
         metadata["target_column"],
         tolerance=args.sum_tolerance,
-        min_pol6tta_count=args.min_pol6tta_count,
-        min_cobertura_count=args.min_cobertura_count,
+        min_pair_count=args.min_pair_count,
     )
     saved_path = save_dataset_as_parquet(clean_dataset, output_path)
     saved_doubtful_path = save_dataset_as_parquet(

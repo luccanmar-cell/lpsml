@@ -11,18 +11,13 @@ from joblib import effective_n_jobs, parallel_backend
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, clone
-from sklearn.ensemble import (
-    ExtraTreesRegressor,
-    GradientBoostingRegressor,
-    HistGradientBoostingRegressor,
-    RandomForestRegressor,
-)
-from sklearn.linear_model import ElasticNet, Ridge
+from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 from sklearn.metrics import make_scorer
 from sklearn.model_selection import GridSearchCV, KFold, cross_val_score, train_test_split
-from sklearn.multioutput import MultiOutputRegressor
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler
+
+from .torch_regressor import NonnegativeJointRegressor
 
 try:
     import optuna
@@ -31,19 +26,13 @@ except ImportError:
 
 
 MODEL_TYPES: dict[str, type[BaseEstimator]] = {
-    "elastic_net": ElasticNet,
     "extra_trees": ExtraTreesRegressor,
-    "gradient_boosting": GradientBoostingRegressor,
-    "hist_gradient_boosting": HistGradientBoostingRegressor,
+    "pytorch": NonnegativeJointRegressor,
     "random_forest": RandomForestRegressor,
-    "ridge": Ridge,
 }
 
-NATIVE_MULTIOUTPUT_MODEL_TYPES = {
-    "extra_trees",
-    "random_forest",
-    "ridge",
-}
+JOINT_LOSS_MODEL_TYPES = {"pytorch"}
+MODEL_PARAMETER_PREFIX = "model__"
 
 SCALER_TYPES: dict[str, type[BaseEstimator] | None] = {
     "none": None,
@@ -73,6 +62,14 @@ def load_training_data(
         raise ValueError(f"Target columns were not found: {missing_targets}")
 
     df = df.dropna(subset=required_targets)
+    if df[required_targets].lt(0).any().any():
+        negative_columns = df[required_targets].columns[
+            df[required_targets].lt(0).any()
+        ].tolist()
+        raise ValueError(
+            "Premium targets must be nonnegative. Rebuild the dataset; "
+            f"negative values remain in: {negative_columns}"
+        )
     excluded_columns = [*required_targets, *(drop_columns or [])]
     features = df.drop(columns=excluded_columns, errors="ignore")
     targets = df[target_columns]
@@ -86,18 +83,54 @@ def load_training_data(
     return features, targets
 
 
+def build_joint_strata(frame: pd.DataFrame, columns: list[str]) -> pd.Series:
+    """Build stable labels for stratifying on a combination of columns."""
+    missing_columns = [column for column in columns if column not in frame.columns]
+    if missing_columns:
+        raise ValueError(f"Stratification columns were not found: {missing_columns}")
+    if not columns:
+        raise ValueError("At least one stratification column is required.")
+    return (
+        frame[columns]
+        .astype("string")
+        .fillna("Missing")
+        .agg("\x1f".join, axis=1)
+        .rename("Stratum")
+    )
+
+
 def split_train_test(
     features: pd.DataFrame,
     target: pd.DataFrame,
+    strata: pd.Series,
     test_size: float,
     random_state: int,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Reserve the test set before any cross-validation or model selection."""
+    """Reserve a holdout set while preserving every supplied stratum."""
+    if not features.index.equals(target.index) or not features.index.equals(strata.index):
+        raise ValueError("Features, targets, and strata must have identical indices.")
+    if not 0 < test_size < 1:
+        raise ValueError("test_size must be between 0 and 1.")
+    stratum_counts = strata.value_counts()
+    if stratum_counts.empty or stratum_counts.min() < 2:
+        raise ValueError(
+            "Every stratification pair needs at least two rows. "
+            "Increase the data-processing pair threshold or rebuild the dataset."
+        )
+    test_rows = int(np.ceil(len(features) * test_size))
+    train_rows = len(features) - test_rows
+    if len(stratum_counts) > min(train_rows, test_rows):
+        raise ValueError(
+            "The requested split is too small to place every stratification pair "
+            "in both train and test."
+        )
+
     return train_test_split(
         features,
         target,
         test_size=test_size,
         random_state=random_state,
+        stratify=strata,
     )
 
 
@@ -114,19 +147,27 @@ def build_pipeline(
         supported = ", ".join(sorted(SCALER_TYPES))
         raise ValueError(f"Unsupported scaler type '{scaler_type}'. Choose from: {supported}.")
 
-    base_model = MODEL_TYPES[model_type](**(fixed_params or {}))
-    model = (
-        base_model
-        if model_type in NATIVE_MULTIOUTPUT_MODEL_TYPES
-        else MultiOutputRegressor(base_model, n_jobs=1)
-    )
+    model = MODEL_TYPES[model_type](**(fixed_params or {}))
     scaler_class = SCALER_TYPES[scaler_type]
     scaler: BaseEstimator | str = scaler_class() if scaler_class else "passthrough"
     return Pipeline([("scaler", scaler), ("model", model)])
 
 
+def predict_premium_components(model: Any, features: pd.DataFrame) -> np.ndarray:
+    """Predict premium components and enforce the nonnegative model contract."""
+    predictions = np.asarray(model.predict(features), dtype=float)
+    if not np.isfinite(predictions).all():
+        raise ValueError("The model produced a non-finite premium component.")
+    if np.any(predictions < 0):
+        minimum = float(predictions.min())
+        raise ValueError(
+            "The model produced a negative premium component "
+            f"(minimum={minimum:.6f})."
+        )
+    return predictions
+
+
 def build_parameter_grid(
-    pipeline: Pipeline,
     parameter_grid: dict[str, list[Any]] | None,
 ) -> dict[str, list[Any]]:
     """Prefix model parameters for GridSearchCV's Cartesian-product grid."""
@@ -137,13 +178,7 @@ def build_parameter_grid(
             "Every parameter grid value must be a JSON list. Invalid parameters: "
             + ", ".join(invalid_parameters)
         )
-    prefix = model_parameter_prefix(pipeline)
-    return {f"{prefix}{name}": values for name, values in grid.items()}
-
-
-def model_parameter_prefix(pipeline: Pipeline) -> str:
-    """Return the parameter path for native or wrapped multi-output estimators."""
-    return "model__estimator__" if "model__estimator" in pipeline.get_params() else "model__"
+    return {f"{MODEL_PARAMETER_PREFIX}{name}": values for name, values in grid.items()}
 
 
 def balanced_multioutput_mse(
@@ -190,12 +225,10 @@ def configure_tuning_parallelism(
     outer_workers = effective_n_jobs(outer_n_jobs)
     inner_threads = max(1, (os.cpu_count() or 1) // outer_workers)
     parallel_params: dict[str, int] = {}
-    wrapped_model = "model__estimator" in pipeline.get_params()
     for name in pipeline.get_params():
         if not (name.startswith("model__") and name.endswith("n_jobs")):
             continue
-        is_wrapper_worker = wrapped_model and name == "model__n_jobs"
-        parallel_params[name] = 1 if is_wrapper_worker else inner_threads
+        parallel_params[name] = inner_threads
 
     configured = clone(pipeline)
     if parallel_params:
@@ -249,10 +282,7 @@ def run_grid_search(
 
     search = GridSearchCV(
         estimator=search_pipeline,
-        param_grid=build_parameter_grid(
-            search_pipeline,
-            model_config.get("param_grid"),
-        ),
+        param_grid=build_parameter_grid(model_config.get("param_grid")),
         scoring=scorer,
         cv=cv,
         n_jobs=n_jobs,
@@ -261,14 +291,12 @@ def run_grid_search(
     )
     with parallel_backend("loky", inner_max_num_threads=inner_threads):
         search.fit(x_train, y_train)
-    search_prefix = model_parameter_prefix(search_pipeline)
     best_params = {
-        name.removeprefix(search_prefix): value
+        name.removeprefix(MODEL_PARAMETER_PREFIX): value
         for name, value in search.best_params_.items()
     }
-    final_prefix = model_parameter_prefix(pipeline)
     best_pipeline = clone(pipeline).set_params(
-        **{f"{final_prefix}{name}": value for name, value in best_params.items()}
+        **{f"{MODEL_PARAMETER_PREFIX}{name}": value for name, value in best_params.items()}
     )
     best_pipeline.fit(x_train, y_train)
     return best_pipeline, best_params, -float(search.best_score_)
@@ -311,9 +339,11 @@ def run_optuna_search(
 
     def objective(trial: Any) -> float:
         parameters = suggest_optuna_parameters(trial, search_space)
-        tuning_prefix = model_parameter_prefix(tuning_pipeline)
         candidate = clone(tuning_pipeline).set_params(
-            **{f"{tuning_prefix}{name}": value for name, value in parameters.items()}
+            **{
+                f"{MODEL_PARAMETER_PREFIX}{name}": value
+                for name, value in parameters.items()
+            }
         )
         with parallel_backend("loky", inner_max_num_threads=inner_threads):
             scores = cross_val_score(
@@ -343,9 +373,8 @@ def run_optuna_search(
     )
 
     best_params = dict(study.best_trial.params)
-    final_prefix = model_parameter_prefix(pipeline)
     best_pipeline = clone(pipeline).set_params(
-        **{f"{final_prefix}{name}": value for name, value in best_params.items()}
+        **{f"{MODEL_PARAMETER_PREFIX}{name}": value for name, value in best_params.items()}
     )
     best_pipeline.set_params(**model_n_jobs)
     best_pipeline.fit(x_train, y_train)
@@ -382,10 +411,14 @@ def search_models(
 
         model_name = model_config.get("name", model_config["type"])
         for scaler_type in model_config.get("scalers", ["none"]):
+            fixed_params = dict(model_config.get("fixed_params", {}))
+            if model_config["type"] in JOINT_LOSS_MODEL_TYPES:
+                fixed_params.setdefault("final_weight", final_weight)
+                fixed_params.setdefault("random_state", random_state)
             pipeline = build_pipeline(
                 model_config["type"],
                 scaler_type,
-                fixed_params=model_config.get("fixed_params"),
+                fixed_params=fixed_params,
             )
             if search_method == "grid":
                 estimator, best_params, cv_mse = run_grid_search(
@@ -409,9 +442,9 @@ def search_models(
                     "model": model_name,
                     "model_type": model_config["type"],
                     "multioutput_strategy": (
-                        "native"
-                        if model_config["type"] in NATIVE_MULTIOUTPUT_MODEL_TYPES
-                        else "wrapped"
+                        "joint-loss"
+                        if model_config["type"] in JOINT_LOSS_MODEL_TYPES
+                        else "native"
                     ),
                     "scaler": scaler_type,
                     "search_method": search_method,

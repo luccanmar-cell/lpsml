@@ -8,3 +8,4 @@ optuna
 openpyxl
 plotly
 streamlit
+torch

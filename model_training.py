@@ -8,15 +8,17 @@ from typing import Any
 import joblib
 import pandas as pd
 
-from metrics_utils import (
+from lpsml.reporting.metrics import (
     compute_multioutput_metrics,
     create_scored_dataset,
     save_grouped_mape_bar_plot,
     save_metrics_log,
 )
-from training_utils import (
+from lpsml.modeling.training import (
+    build_joint_strata,
     load_json_config,
     load_training_data,
+    predict_premium_components,
     search_models,
     split_train_test,
 )
@@ -24,7 +26,7 @@ from training_utils import (
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Select and train a scikit-learn regression model."
+        description="Select and train a premium regression model."
     )
     parser.add_argument(
         "dataset",
@@ -33,7 +35,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--config",
-        default="model_training_config.json",
+        default="configs/model_training.json",
         help="JSON file defining the split, CV, models, scalers, and search spaces.",
     )
     parser.add_argument(
@@ -100,17 +102,28 @@ def main() -> None:
     component_target_columns = config["component_target_columns"]
     identity_column = config.get("identity_column", "NroPoliza")
     random_state = int(config.get("random_state", 42))
+    source_df = pd.read_parquet(dataset_path)
     features, target = load_training_data(
         Path(dataset_path),
         target_columns=component_target_columns,
         total_target_column=total_target_column,
         drop_columns=config.get("drop_columns", ["NroPoliza"]),
     )
+    stratify_columns = config.get(
+        "stratify_columns",
+        ["Pol6TTaCod", "CoberturaLabel"],
+    )
+    strata = build_joint_strata(source_df.loc[features.index], stratify_columns)
     x_train, x_test, y_train, y_test = split_train_test(
         features,
         target,
+        strata,
         test_size=float(config.get("test_size", 0.2)),
         random_state=random_state,
+    )
+    print(
+        f"Stratified split: {len(x_train):,} train / {len(x_test):,} test rows "
+        f"across {strata.nunique():,} tariff-coverage pairs."
     )
 
     best_model, best_result, results = search_models(x_train, y_train, config)
@@ -122,10 +135,11 @@ def main() -> None:
 
     run_time = datetime.now().astimezone()
     run_id = run_time.strftime("%Y%m%d_%H%M%S_%f")
-    run_directory = Path(config.get("output_directory", "training_runs")) / run_id
+    run_directory = (
+        Path(config.get("output_directory", "artifacts/training_runs")) / run_id
+    )
     run_directory.mkdir(parents=True, exist_ok=False)
 
-    source_df = pd.read_parquet(dataset_path)
     mape_group_columns = config.get(
         "mape_group_columns",
         {
@@ -136,7 +150,7 @@ def main() -> None:
     model_logs: list[dict[str, Any]] = []
     for result in best_result_per_model_type(results):
         model = result["estimator"]
-        predictions = model.predict(x_test)
+        predictions = predict_premium_components(model, x_test)
         metrics = compute_multioutput_metrics(
             y_test,
             predictions,
@@ -210,6 +224,8 @@ def main() -> None:
             "target_column": total_target_column,
             "component_target_columns": component_target_columns,
             "identity_column": identity_column,
+            "stratify_columns": stratify_columns,
+            "stratum_count": strata.nunique(),
             "search_method": config.get("search", {}).get("method", "grid"),
             "random_state": random_state,
             "train_rows": len(x_train),

@@ -270,73 +270,74 @@ def build_model_dataset(
     return df, metadata
 
 
-def split_prima_sum_consistency(
+def split_valid_model_rows(
     df: pd.DataFrame,
     component_target_columns: Iterable[str],
     total_target_column: str,
     tolerance: float = 0.02,
-    min_pol6tta_count: int = 50,
-    min_cobertura_count: int = 50,
+    min_pair_count: int = 50,
 ) -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Separate rows that satisfy target, coverage, and category-frequency checks."""
-    if min_pol6tta_count < 1:
-        raise ValueError("min_pol6tta_count must be at least 1.")
-    if min_cobertura_count < 1:
-        raise ValueError("min_cobertura_count must be at least 1.")
+    """Separate valid rows and require frequent tariff-coverage pairs."""
+    if min_pair_count < 2:
+        raise ValueError("min_pair_count must be at least 2.")
 
     component_columns = list(component_target_columns)
     difference = df[total_target_column] - df[component_columns].sum(axis=1)
     sum_consistent = np.abs(difference.to_numpy(dtype=float)) <= tolerance + 1e-9
-    if "CoberturaLabel" in df.columns:
-        cobertura_present = df["CoberturaLabel"].ne("Missing").to_numpy()
-    else:
-        cobertura_present = df["Cobertura"].notna().to_numpy()
+    premiums_nonnegative = (
+        df[[*component_columns, total_target_column]].ge(0).all(axis=1).to_numpy()
+    )
+    coverage_column = (
+        "CoberturaLabel" if "CoberturaLabel" in df.columns else "Cobertura"
+    )
+    pair_columns = ["Pol6TTaCod", coverage_column]
+    missing_columns = [column for column in pair_columns if column not in df.columns]
+    if missing_columns:
+        raise ValueError(f"Pair columns were not found: {missing_columns}")
 
-    pol6tta_counts = df["Pol6TTaCod"].value_counts(dropna=False)
-    row_pol6tta_counts = df["Pol6TTaCod"].map(pol6tta_counts).to_numpy(dtype=int)
-    pol6tta_sufficient = row_pol6tta_counts >= min_pol6tta_count
-    cobertura_counts = df["CoberturaLabel"].value_counts(dropna=False)
-    row_cobertura_counts = df["CoberturaLabel"].map(cobertura_counts).to_numpy(dtype=int)
-    cobertura_sufficient = row_cobertura_counts >= min_cobertura_count
+    cobertura_present = (
+        df[coverage_column].notna() & df[coverage_column].ne("Missing")
+    ).to_numpy()
+    otherwise_valid = sum_consistent & premiums_nonnegative & cobertura_present
+    pair_keys = df[pair_columns].astype("string").fillna("Missing").agg(tuple, axis=1)
+    eligible_pair_counts = pair_keys[otherwise_valid].value_counts()
+    row_pair_counts = pair_keys.map(eligible_pair_counts).fillna(0).to_numpy(dtype=int)
+    pair_sufficient = row_pair_counts >= min_pair_count
     clean_mask = (
         sum_consistent
+        & premiums_nonnegative
         & cobertura_present
-        & cobertura_sufficient
-        & pol6tta_sufficient
+        & pair_sufficient
     )
 
     clean_df = df.loc[clean_mask].copy()
     doubtful_df = df.loc[~clean_mask].copy()
     doubtful_df["PrimaSumDifference"] = difference.loc[~clean_mask]
-    doubtful_df["Pol6TTaCodCount"] = row_pol6tta_counts[~clean_mask]
-    doubtful_df["CoberturaCount"] = row_cobertura_counts[~clean_mask]
+    doubtful_df["TariffCoveragePairCount"] = row_pair_counts[~clean_mask]
     doubtful_df["DoubtfulReason"] = [
         "; ".join(
             reason
             for condition, reason in [
                 (not sum_is_consistent, "Prima component sum mismatch"),
+                (not premiums_are_nonnegative, "Negative Prima value"),
                 (not has_cobertura, "Missing Cobertura"),
                 (
-                    has_cobertura and not has_sufficient_cobertura,
-                    f"Rare Cobertura (<{min_cobertura_count} rows)",
-                ),
-                (
-                    not has_sufficient_pol6tta,
-                    f"Rare Pol6TTaCod (<{min_pol6tta_count} rows)",
+                    has_cobertura and not has_sufficient_pair,
+                    f"Rare Pol6TTaCod/Cobertura pair (<{min_pair_count} rows)",
                 ),
             ]
             if condition
         )
         for (
             sum_is_consistent,
+            premiums_are_nonnegative,
             has_cobertura,
-            has_sufficient_cobertura,
-            has_sufficient_pol6tta,
+            has_sufficient_pair,
         ) in zip(
             sum_consistent[~clean_mask],
+            premiums_nonnegative[~clean_mask],
             cobertura_present[~clean_mask],
-            cobertura_sufficient[~clean_mask],
-            pol6tta_sufficient[~clean_mask],
+            pair_sufficient[~clean_mask],
         )
     ]
     return clean_df, doubtful_df
