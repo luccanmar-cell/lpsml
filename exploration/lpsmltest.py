@@ -78,7 +78,7 @@ def computemetrics(model, X_test, Y_test, X_train):
     plt.ylabel('Valores Previstos / Promedio de y_true')
     plt.title(f'Actual vs Previsto (MAE: {mae:.2f}, MAPE: {mape_percentage:.2f}%)')
     plt.legend()
-    plt.savefig("MAE.png")
+    plt.savefig("MAE_error.png")
 
     plt.figure(2, figsize=(10, 5))
     plt.hist(np.abs(y_true - y_pred), bins=30, color="steelblue", edgecolor="black")
