@@ -9,6 +9,8 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
+from lpsml.data.processing import TARIFF_COVERAGE_FEATURE_PREFIX
+
 
 LPS_RED = "#A51E36"
 LPS_RED_DARK = "#751426"
@@ -356,6 +358,7 @@ def business_table_columns(frame: pd.DataFrame) -> list[str]:
         return (
             column.startswith("Accesorios_")
             or column.startswith("Cobertura_")
+            or column.startswith(f"{TARIFF_COVERAGE_FEATURE_PREFIX}_")
             or column.endswith("Encoded")
         )
 

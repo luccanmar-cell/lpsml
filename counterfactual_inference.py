@@ -15,6 +15,7 @@ from typing import Any
 import joblib
 import pandas as pd
 
+from lpsml.data.processing import TARIFF_COVERAGE_FEATURE_PREFIX
 from lpsml.modeling.training import load_json_config, predict_premium_components
 
 
@@ -244,7 +245,12 @@ def build_counterfactual_frame(
     if components.lt(0).any().any():
         raise ValueError("Prediction adjustments produced a negative premium component.")
 
-    result = selected.copy()
+    training_encoding_columns = [
+        column
+        for column in selected.columns
+        if column.startswith(f"{TARIFF_COVERAGE_FEATURE_PREFIX}_")
+    ]
+    result = selected.drop(columns=training_encoding_columns).copy()
     for change in feature_changes:
         field = change["field"]
         result[f"{field}_Counterfactual"] = counterfactual_features[field]

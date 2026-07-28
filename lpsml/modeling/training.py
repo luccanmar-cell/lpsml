@@ -7,13 +7,13 @@ from typing import Any
 
 os.environ.setdefault("LOKY_MAX_CPU_COUNT", str(os.cpu_count() or 1))
 
-from joblib import effective_n_jobs, parallel_backend
+from joblib import Parallel, delayed, effective_n_jobs, parallel_backend
 import numpy as np
 import pandas as pd
 from sklearn.base import BaseEstimator, clone
 from sklearn.ensemble import ExtraTreesRegressor, RandomForestRegressor
 from sklearn.metrics import make_scorer
-from sklearn.model_selection import GridSearchCV, KFold, cross_val_score, train_test_split
+from sklearn.model_selection import ParameterGrid, StratifiedKFold, train_test_split
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import MinMaxScaler, RobustScaler, StandardScaler
 
@@ -170,7 +170,7 @@ def predict_premium_components(model: Any, features: pd.DataFrame) -> np.ndarray
 def build_parameter_grid(
     parameter_grid: dict[str, list[Any]] | None,
 ) -> dict[str, list[Any]]:
-    """Prefix model parameters for GridSearchCV's Cartesian-product grid."""
+    """Prefix model parameters for the Cartesian-product grid search."""
     grid = parameter_grid or {}
     invalid_parameters = [name for name, values in grid.items() if not isinstance(values, list)]
     if invalid_parameters:
@@ -211,6 +211,100 @@ def make_balanced_mse_scorer(final_weight: float) -> Any:
         balanced_multioutput_mse,
         greater_is_better=False,
         final_weight=final_weight,
+    )
+
+
+def worst_group_mape(
+    y_true: Any,
+    y_pred: Any,
+    groups: pd.Series,
+) -> float:
+    """Return the largest final-premium MAPE among predefined row groups."""
+    actual = np.asarray(y_true, dtype=float)
+    predicted = np.asarray(y_pred, dtype=float)
+    if actual.shape != predicted.shape or actual.ndim != 2:
+        raise ValueError("Actual and predicted component targets must be matching matrices.")
+    if len(groups) != len(actual):
+        raise ValueError("Group labels must have one value per target row.")
+
+    actual_total = actual.sum(axis=1)
+    predicted_total = predicted.sum(axis=1)
+    denominator = np.abs(actual_total)
+    if np.any(denominator <= np.finfo(float).eps):
+        raise ValueError(
+            "Worst-group MAPE requires a strictly positive final premium for every row."
+        )
+    percentage_error = np.abs(actual_total - predicted_total) / denominator * 100
+    grouped_mape = (
+        pd.DataFrame(
+            {
+                "group": pd.Series(
+                    np.asarray(groups, dtype=object),
+                    dtype="string",
+                ).fillna("Missing"),
+                "percentage_error": percentage_error,
+            }
+        )
+        .groupby("group", sort=True)["percentage_error"]
+        .mean()
+    )
+    if grouped_mape.empty:
+        raise ValueError("Worst-group MAPE requires at least one group.")
+    return float(grouped_mape.max())
+
+
+def cross_validated_worst_group_mape(
+    pipeline: Pipeline,
+    x_train: pd.DataFrame,
+    y_train: pd.DataFrame,
+    strata: pd.Series,
+    cv: StratifiedKFold,
+    n_jobs: int,
+) -> float:
+    """Score complete out-of-fold predictions by their worst pair-level MAPE."""
+    if (
+        not x_train.index.equals(y_train.index)
+        or not x_train.index.equals(strata.index)
+    ):
+        raise ValueError("Features, targets, and strata must have identical indices.")
+
+    tuning_pipeline, inner_threads = configure_tuning_parallelism(pipeline, n_jobs)
+    splits = list(cv.split(x_train, strata))
+
+    def fit_and_predict(
+        training_positions: np.ndarray,
+        validation_positions: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        estimator = clone(tuning_pipeline)
+        estimator.fit(
+            x_train.iloc[training_positions],
+            y_train.iloc[training_positions],
+        )
+        predictions = predict_premium_components(
+            estimator,
+            x_train.iloc[validation_positions],
+        )
+        return validation_positions, predictions
+
+    with parallel_backend("loky", inner_max_num_threads=inner_threads):
+        fold_predictions = Parallel(
+            n_jobs=n_jobs,
+            pre_dispatch=n_jobs if n_jobs > 0 else "n_jobs",
+        )(
+            delayed(fit_and_predict)(training_positions, validation_positions)
+            for training_positions, validation_positions in splits
+        )
+
+    out_of_fold_predictions = np.full(y_train.shape, np.nan, dtype=float)
+    for validation_positions, predictions in fold_predictions:
+        out_of_fold_predictions[validation_positions] = predictions
+    if not np.isfinite(out_of_fold_predictions).all():
+        raise RuntimeError("Cross-validation did not predict every training row.")
+
+    return worst_group_mape(
+        y_train,
+        out_of_fold_predictions,
+        strata,
     )
 
 
@@ -273,33 +367,36 @@ def run_grid_search(
     model_config: dict[str, Any],
     x_train: pd.DataFrame,
     y_train: pd.DataFrame,
-    cv: KFold,
+    strata: pd.Series,
+    cv: StratifiedKFold,
     n_jobs: int,
-    scorer: Any,
 ) -> tuple[Pipeline, dict[str, Any], float]:
-    """Exhaustively select parameters using balanced component/final MSE."""
-    search_pipeline, inner_threads = configure_tuning_parallelism(pipeline, n_jobs)
+    """Exhaustively select parameters by out-of-fold worst-pair MAPE."""
+    scores: list[tuple[float, dict[str, Any]]] = []
+    for prefixed_params in ParameterGrid(
+        build_parameter_grid(model_config.get("param_grid"))
+    ):
+        candidate = clone(pipeline).set_params(**prefixed_params)
+        score = cross_validated_worst_group_mape(
+            candidate,
+            x_train,
+            y_train,
+            strata,
+            cv,
+            n_jobs,
+        )
+        scores.append((score, prefixed_params))
 
-    search = GridSearchCV(
-        estimator=search_pipeline,
-        param_grid=build_parameter_grid(model_config.get("param_grid")),
-        scoring=scorer,
-        cv=cv,
-        n_jobs=n_jobs,
-        pre_dispatch=n_jobs if n_jobs > 0 else "n_jobs",
-        refit=False,
-    )
-    with parallel_backend("loky", inner_max_num_threads=inner_threads):
-        search.fit(x_train, y_train)
+    best_score, best_prefixed_params = min(scores, key=lambda result: result[0])
     best_params = {
         name.removeprefix(MODEL_PARAMETER_PREFIX): value
-        for name, value in search.best_params_.items()
+        for name, value in best_prefixed_params.items()
     }
     best_pipeline = clone(pipeline).set_params(
         **{f"{MODEL_PARAMETER_PREFIX}{name}": value for name, value in best_params.items()}
     )
     best_pipeline.fit(x_train, y_train)
-    return best_pipeline, best_params, -float(search.best_score_)
+    return best_pipeline, best_params, best_score
 
 
 def run_optuna_search(
@@ -307,13 +404,13 @@ def run_optuna_search(
     model_config: dict[str, Any],
     x_train: pd.DataFrame,
     y_train: pd.DataFrame,
-    cv: KFold,
+    strata: pd.Series,
+    cv: StratifiedKFold,
     n_jobs: int,
     search_config: dict[str, Any],
     random_state: int,
-    scorer: Any,
 ) -> tuple[Pipeline, dict[str, Any], float]:
-    """Use Optuna to minimize cross-validated balanced MSE."""
+    """Use Optuna to minimize out-of-fold worst-pair final-Prima MAPE."""
     if optuna is None:
         raise RuntimeError("Optuna search requires the optional 'optuna' package.")
 
@@ -332,32 +429,23 @@ def run_optuna_search(
         for name, value in pipeline_params.items()
         if name.startswith("model__") and name.endswith("n_jobs")
     }
-    tuning_pipeline, inner_threads = configure_tuning_parallelism(
-        pipeline,
-        trial_cv_n_jobs,
-    )
 
     def objective(trial: Any) -> float:
         parameters = suggest_optuna_parameters(trial, search_space)
-        candidate = clone(tuning_pipeline).set_params(
+        candidate = clone(pipeline).set_params(
             **{
                 f"{MODEL_PARAMETER_PREFIX}{name}": value
                 for name, value in parameters.items()
             }
         )
-        with parallel_backend("loky", inner_max_num_threads=inner_threads):
-            scores = cross_val_score(
-                candidate,
-                x_train,
-                y_train,
-                scoring=scorer,
-                cv=cv,
-                n_jobs=trial_cv_n_jobs,
-                pre_dispatch=(
-                    trial_cv_n_jobs if trial_cv_n_jobs > 0 else "n_jobs"
-                ),
-            )
-        return -float(scores.mean())
+        return cross_validated_worst_group_mape(
+            candidate,
+            x_train,
+            y_train,
+            strata,
+            cv,
+            trial_cv_n_jobs,
+        )
 
     sampler = optuna.samplers.TPESampler(seed=random_state)
     study = optuna.create_study(direction="minimize", sampler=sampler)
@@ -384,25 +472,36 @@ def run_optuna_search(
 def search_models(
     x_train: pd.DataFrame,
     y_train: pd.DataFrame,
+    strata: pd.Series,
     config: dict[str, Any],
 ) -> tuple[Pipeline, dict[str, Any], list[dict[str, Any]]]:
-    """Select a model by cross-validated training balanced MSE."""
+    """Select a model by pair-stratified out-of-fold worst-pair MAPE."""
     cv_config = config.get("cv", {})
     search_config = config.get("search", {})
     search_method = search_config.get("method", "grid")
     if search_method not in {"grid", "optuna"}:
         raise ValueError("search.method must be either 'grid' or 'optuna'.")
+    if (
+        not x_train.index.equals(y_train.index)
+        or not x_train.index.equals(strata.index)
+    ):
+        raise ValueError("Features, targets, and strata must have identical indices.")
 
     random_state = int(config.get("random_state", 42))
     shuffle = bool(cv_config.get("shuffle", True))
-    cv = KFold(
-        n_splits=int(cv_config.get("n_splits", 5)),
+    n_splits = int(cv_config.get("n_splits", 5))
+    stratum_counts = strata.value_counts()
+    if stratum_counts.empty or stratum_counts.min() < n_splits:
+        raise ValueError(
+            "Every tariff-coverage pair needs at least cv.n_splits training rows."
+        )
+    cv = StratifiedKFold(
+        n_splits=n_splits,
         shuffle=shuffle,
         random_state=random_state if shuffle else None,
     )
     n_jobs = int(cv_config.get("n_jobs", -1))
     final_weight = float(config.get("final_weight", 0.5))
-    scorer = make_balanced_mse_scorer(final_weight)
 
     results: list[dict[str, Any]] = []
     for model_config in config.get("models", []):
@@ -421,20 +520,26 @@ def search_models(
                 fixed_params=fixed_params,
             )
             if search_method == "grid":
-                estimator, best_params, cv_mse = run_grid_search(
-                    pipeline, model_config, x_train, y_train, cv, n_jobs, scorer
-                )
-            else:
-                estimator, best_params, cv_mse = run_optuna_search(
+                estimator, best_params, cv_worst_pair_mape = run_grid_search(
                     pipeline,
                     model_config,
                     x_train,
                     y_train,
+                    strata,
+                    cv,
+                    n_jobs,
+                )
+            else:
+                estimator, best_params, cv_worst_pair_mape = run_optuna_search(
+                    pipeline,
+                    model_config,
+                    x_train,
+                    y_train,
+                    strata,
                     cv,
                     n_jobs,
                     search_config,
                     random_state,
-                    scorer,
                 )
 
             results.append(
@@ -458,7 +563,7 @@ def search_models(
                         if search_method == "optuna"
                         else None
                     ),
-                    "cv_balanced_mse": cv_mse,
+                    "cv_worst_pair_mape_percent": cv_worst_pair_mape,
                     "best_params": best_params,
                     "estimator": estimator,
                 }
@@ -467,5 +572,8 @@ def search_models(
     if not results:
         raise ValueError("The configuration does not contain any enabled models.")
 
-    best_result = min(results, key=lambda result: result["cv_balanced_mse"])
+    best_result = min(
+        results,
+        key=lambda result: result["cv_worst_pair_mape_percent"],
+    )
     return best_result["estimator"], best_result, results

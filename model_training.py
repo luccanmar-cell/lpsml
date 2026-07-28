@@ -52,7 +52,8 @@ def print_search_results(results: list[dict[str, Any]]) -> None:
         print(
             f"  {result['model']} | multi-output={result['multioutput_strategy']} | "
             f"scaler={result['scaler']} | "
-            f"balanced MSE={result['cv_balanced_mse']:.4f} | "
+            "worst-pair MAPE="
+            f"{result['cv_worst_pair_mape_percent']:.2f}% | "
             f"params={result['best_params']}"
         )
 
@@ -66,7 +67,8 @@ def best_result_per_model_type(
         current = best_by_type.get(result["model_type"])
         if (
             current is None
-            or result["cv_balanced_mse"] < current["cv_balanced_mse"]
+            or result["cv_worst_pair_mape_percent"]
+            < current["cv_worst_pair_mape_percent"]
         ):
             best_by_type[result["model_type"]] = result
     return list(best_by_type.values())
@@ -126,10 +128,16 @@ def main() -> None:
         f"across {strata.nunique():,} tariff-coverage pairs."
     )
 
-    best_model, best_result, results = search_models(x_train, y_train, config)
+    training_strata = strata.loc[x_train.index]
+    best_model, best_result, results = search_models(
+        x_train,
+        y_train,
+        training_strata,
+        config,
+    )
     print_search_results(results)
     print(
-        f"\nSelected by CV balanced MSE: {best_result['model']} with "
+        f"\nSelected by CV worst-pair MAPE: {best_result['model']} with "
         f"scaler={best_result['scaler']} and params={best_result['best_params']}"
     )
 
@@ -181,7 +189,9 @@ def main() -> None:
             "multioutput_strategy": result["multioutput_strategy"],
             "scaler": result["scaler"],
             "search_trials": result["search_trials"],
-            "cv_balanced_mse": result["cv_balanced_mse"],
+            "cv_worst_pair_mape_percent": result[
+                "cv_worst_pair_mape_percent"
+            ],
             "best_params": result["best_params"],
             "test_metrics": metrics,
             "model_path": model_path,
@@ -234,7 +244,9 @@ def main() -> None:
             "overall_best_multioutput_strategy": best_result["multioutput_strategy"],
             "overall_best_scaler": best_result["scaler"],
             "overall_best_params": best_result["best_params"],
-            "overall_best_cv_balanced_mse": best_result["cv_balanced_mse"],
+            "overall_best_cv_worst_pair_mape_percent": best_result[
+                "cv_worst_pair_mape_percent"
+            ],
             "overall_best_model_path": overall_model_log["model_path"],
             "scored_dataset_path": scored_dataset_path,
             "scored_excel_path": scored_excel_path,

@@ -46,7 +46,9 @@ def test_apply_value_changes_supports_input_and_output_specs() -> None:
 
 def test_build_counterfactual_frame_applies_both_change_stages() -> None:
     class DummyModel:
-        feature_names_in_ = np.array(["TasaCasco", "FactorCasco"])
+        feature_names_in_ = np.array(
+            ["TasaCasco", "FactorCasco", "TariffCoverage_X__A"]
+        )
 
         def predict(self, features: pd.DataFrame) -> np.ndarray:
             return np.column_stack(
@@ -62,6 +64,7 @@ def test_build_counterfactual_frame_applies_both_change_stages() -> None:
             "antig": [3, 8],
             "TasaCasco": [10.0, 20.0],
             "FactorCasco": [1.0, 2.0],
+            "TariffCoverage_X__A": [1, 0],
             "PrimaRC": [90.0, 180.0],
             "PrimaCasco": [95.0, 190.0],
             "Prima": [185.0, 370.0],
@@ -99,6 +102,7 @@ def test_build_counterfactual_frame_applies_both_change_stages() -> None:
     assert np.isclose(result.loc[0, "PrimaRC_Counterfactual"], 110.0)
     assert np.isclose(result.loc[0, "PrimaCasco_Counterfactual"], 115.0)
     assert np.isclose(result.loc[0, "Prima_Counterfactual"], 225.0)
+    assert "TariffCoverage_X__A" not in result.columns
 
 
 def test_model_feature_names_supports_older_pipelines() -> None:

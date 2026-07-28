@@ -8,6 +8,7 @@ import pandas as pd
 
 
 DEFAULT_ACCESSORIES_COLUMN = "Accesorios"
+TARIFF_COVERAGE_FEATURE_PREFIX = "TariffCoverage"
 COBERTURA_LABELS = {
     1: "A",
     2: "A2",
@@ -226,23 +227,26 @@ def build_model_dataset(
     reporting_columns: list[str] = []
     if "Cobertura" in df.columns:
         df["CoberturaLabel"] = df["Cobertura"].map(cobertura_label).astype("string")
-        cobertura_features = pd.get_dummies(
-            df["CoberturaLabel"],
-            prefix="Cobertura",
-            dtype=np.int8,
-        )
-        df = pd.concat([df.drop(columns=["Cobertura"]), cobertura_features], axis=1)
+        df = df.drop(columns=["Cobertura"])
         reporting_columns.append("CoberturaLabel")
 
     if "Pol6TTaCod" in df.columns:
         original_values = df["Pol6TTaCod"].astype("string").fillna("Missing")
-        categories = sorted(original_values.unique())
-        df["Pol6TTaCodEncoded"] = pd.Categorical(
-            original_values,
-            categories=categories,
-        ).codes
         df["Pol6TTaCod"] = original_values
         reporting_columns.append("Pol6TTaCod")
+
+    if {"Pol6TTaCod", "CoberturaLabel"} <= set(df.columns):
+        pair_values = (
+            df["Pol6TTaCod"].astype("string").fillna("Missing")
+            + "__"
+            + df["CoberturaLabel"].astype("string").fillna("Missing")
+        )
+        pair_features = pd.get_dummies(
+            pair_values,
+            prefix=TARIFF_COVERAGE_FEATURE_PREFIX,
+            dtype=np.int8,
+        )
+        df = pd.concat([df, pair_features], axis=1)
 
     df = convert_numeric_like_columns(
         df,
@@ -311,6 +315,17 @@ def split_valid_model_rows(
     )
 
     clean_df = df.loc[clean_mask].copy()
+    pair_feature_columns = [
+        column
+        for column in clean_df.columns
+        if column.startswith(f"{TARIFF_COVERAGE_FEATURE_PREFIX}_")
+    ]
+    unused_pair_features = [
+        column
+        for column in pair_feature_columns
+        if not clean_df[column].astype(bool).any()
+    ]
+    clean_df = clean_df.drop(columns=unused_pair_features)
     doubtful_df = df.loc[~clean_mask].copy()
     doubtful_df["PrimaSumDifference"] = difference.loc[~clean_mask]
     doubtful_df["TariffCoveragePairCount"] = row_pair_counts[~clean_mask]

@@ -12,6 +12,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from lpsml.data.processing import TARIFF_COVERAGE_FEATURE_PREFIX
 from lpsml.modeling.training import predict_premium_components
 
 
@@ -130,6 +131,12 @@ def create_scored_dataset(
         raise ValueError(f"Identity column '{identity_column}' was not found.")
 
     scored = source_df.loc[features.index].copy()
+    training_encoding_columns = [
+        column
+        for column in scored.columns
+        if column.startswith(f"{TARIFF_COVERAGE_FEATURE_PREFIX}_")
+    ]
+    scored = scored.drop(columns=training_encoding_columns)
     component_predictions = predict_premium_components(model, features)
     if component_predictions.shape != component_targets.shape:
         raise ValueError("Component prediction shape does not match component targets.")

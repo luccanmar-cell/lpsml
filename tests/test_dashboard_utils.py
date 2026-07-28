@@ -3,6 +3,7 @@ import pandas as pd
 
 from lpsml.dashboards.counterfactual import build_change_analysis, target_options
 from lpsml.dashboards.shared import business_table_columns
+from lpsml.reporting.metrics import create_scored_dataset
 
 
 def test_business_table_columns_exclude_model_encodings() -> None:
@@ -17,6 +18,7 @@ def test_business_table_columns_exclude_model_encodings() -> None:
             "Accesorios_16",
             "Cobertura_A",
             "Pol6TTaCodEncoded",
+            "TariffCoverage_X__A",
             "PrimaRC",
             "Prima",
             "PrimaRC Prediction",
@@ -44,6 +46,40 @@ def test_business_table_columns_exclude_model_encodings() -> None:
         "Prima_Baseline",
         "Prima_Counterfactual",
     ]
+
+
+def test_scored_reporting_dataset_excludes_tariff_pair_encodings() -> None:
+    class ConstantModel:
+        def predict(self, features):
+            return np.full((len(features), 1), 100.0)
+
+    source = pd.DataFrame(
+        {
+            "NroPoliza": ["P1", "P2"],
+            "Pol6TTaCod": ["X", "Y"],
+            "CoberturaLabel": ["A", "B"],
+            "TariffCoverage_X__A": [1, 0],
+            "Feature": [10.0, 20.0],
+            "PrimaRC": [100.0, 100.0],
+            "Prima": [100.0, 100.0],
+        }
+    )
+    features = source[["TariffCoverage_X__A", "Feature"]]
+    targets = source[["PrimaRC"]]
+
+    scored = create_scored_dataset(
+        source,
+        features,
+        targets,
+        total_target_column="Prima",
+        model=ConstantModel(),
+        train_indices=pd.Index([0]),
+        test_indices=pd.Index([1]),
+        identity_column="NroPoliza",
+    )
+
+    assert "TariffCoverage_X__A" not in scored.columns
+    assert {"Pol6TTaCod", "CoberturaLabel"} <= set(scored.columns)
 
 
 def test_counterfactual_change_analysis_is_aligned() -> None:
