@@ -6,7 +6,7 @@ automotive insurance portfolio.
 Entrenamiento, evaluación e inferencia contrafactual para modelos de primas de
 una cartera automotor.
 
-[English](#english) · [Español (Argentina)](#espanol)
+[English](#english) · [Español](#espanol)
 
 ## Workflow
 
@@ -54,17 +54,17 @@ have dedicated ignored directories.
 └── tests/
 ```
 
-| Path | English | Español |
-| --- | --- | --- |
-| `build_dataset.py` | Builds clean and doubtful datasets. | Genera los datasets limpio y a revisar. |
-| `model_training.py` | Tunes, evaluates, and saves pricing models. | Ajusta, evalúa y guarda los modelos de primas. |
-| `counterfactual_inference.py` | Runs structured counterfactual scenarios. | Ejecuta escenarios contrafactuales estructurados. |
-| `launch_dashboard.py` | Opens the model-error dashboard. | Abre el dashboard de errores del modelo. |
-| `launch_counterfactual_dashboard.py` | Opens the portfolio-impact dashboard. | Abre el dashboard de impacto sobre la cartera. |
-| `configs/` | Stores versioned model and scenario configuration. | Contiene la configuración versionada de modelos y escenarios. |
-| `lpsml/` | Contains reusable application code grouped by function. | Contiene el código reutilizable agrupado por función. |
-| `data/` | Stores local raw and processed datasets; ignored by Git. | Contiene datasets locales originales y procesados; Git los ignora. |
-| `artifacts/` | Stores generated models, reports, and scenarios; ignored by Git. | Contiene modelos, reportes y escenarios generados; Git los ignora. |
+| Path                                   | English                                                          | Español                                                           |
+| -------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------ |
+| `build_dataset.py`                   | Builds clean and doubtful datasets.                              | Genera los datasets limpio y a revisar.                            |
+| `model_training.py`                  | Tunes, evaluates, and saves pricing models.                      | Ajusta, evalúa y guarda los modelos de primas.                    |
+| `counterfactual_inference.py`        | Runs structured counterfactual scenarios.                        | Ejecuta escenarios contrafactuales estructurados.                  |
+| `launch_dashboard.py`                | Opens the model-error dashboard.                                 | Abre el dashboard de errores del modelo.                           |
+| `launch_counterfactual_dashboard.py` | Opens the portfolio-impact dashboard.                            | Abre el dashboard de impacto sobre la cartera.                     |
+| `configs/`                           | Stores versioned model and scenario configuration.               | Contiene la configuración versionada de modelos y escenarios.     |
+| `lpsml/`                             | Contains reusable application code grouped by function.          | Contiene el código reutilizable agrupado por función.            |
+| `data/`                              | Stores local raw and processed datasets; ignored by Git.         | Contiene datasets locales originales y procesados; Git los ignora. |
+| `artifacts/`                         | Stores generated models, reports, and scenarios; ignored by Git. | Contiene modelos, reportes y escenarios generados; Git los ignora. |
 
 <a id="english"></a>
 
